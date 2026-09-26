@@ -89,23 +89,23 @@ check("Diagnostics tab: triage rendered",
               f"{win.scan_products.toPlainText().splitlines()[0][:60]}")
 check("Plugins tab: purge checkbox present", lambda: f"{win.cb_purge.text()!r} default={win.cb_purge.isChecked()}")
 
-# Downloads tab: catalogue parsing, matching against ~/Downloads, and the install button
-check("Download Plugins tab: catalogue loaded",
+# Download tab: catalogue parsing and matching against ~/Downloads
+check("Download tab: catalogue loaded",
       lambda: f"{len(win._catalogue.releases)} releases ({win._catalogue.fetched or 'snapshot'})")
 win.refresh_downloads()
 app.processEvents()
-check("Download Plugins tab: rows rendered",
+check("Download tab: rows rendered",
       lambda: f"{win.download_table.rowCount()} row(s) — {win.download_summary.text()[:70]}")
-check("Download Plugins tab: an installer in ~/Downloads is matched",
-      lambda: f"{len(win._downloads)} found, install button enabled={win.btn_download_install.isEnabled()}")
-check("Download Plugins tab: catalogue can be refreshed from the live page",
+check("Download tab: an installer in ~/Downloads is matched",
+      lambda: f"{len(win._downloads)} found, staged for Pending Install")
+check("Download tab: catalogue can be refreshed from the live page",
       lambda: (win.load_catalogue(refresh=True) or f"{len(win._catalogue.releases)} releases after refresh"))
 
-# Pending tab: same discovery call the worker makes
-check("Pending tab: discover installers", lambda: f"{len(gui.installers_mod.discover(win.env))} download(s)")
+# Pending Install tab: same discovery call the worker makes
+check("Pending Install tab: discover installers", lambda: f"{len(gui.installers_mod.discover(win.env))} download(s)")
 win.refresh_pending()
 wait_for_worker(win)
-check("Pending tab: rows rendered",
+check("Pending Install tab: rows rendered",
       lambda: f"{win.pending_table.rowCount()} row(s) — {win.pending_summary.text()}")
 
 # enable/disable path, dry run only -- the smoke test must not touch the user's plugins

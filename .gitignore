@@ -11,3 +11,7 @@ wrapper-corpus-*.txt
 screenshots/
 presets-exported-*/
 presets-rescued-*/
+# renders and captures kept for reference, never published
+renders-*/
+user-screenshots-*/
+thread-*-attachments/

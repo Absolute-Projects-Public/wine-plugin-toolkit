@@ -41,7 +41,7 @@ wpt list         # inventory: every plugin file, with its size checked against t
 wpt scan         # registry vs disk: installs that registered but never copied their files
 wpt products     # triage of every Wine prefix on the machine, newest install first
 wpt presets      # your presets and downloaded packs, per product
-wpt-gui          # the GUI: Environment, Plugins, Install, Download Plugins, Pending, Diagnostics
+wpt-gui          # the GUI: Environment, Plugins, Download, Pending Install, Install MSI, Diagnostics
 ```
 
 Worth knowing what "good" looks like: `env` resolves every path, `list` shows sizes matching the MSI
@@ -95,10 +95,11 @@ and Advanced Installer — and for an unrecognised file it falls back to trying 
 installed. Where a wrapper carries several MSIs (Windows runtime bundles do), it names the one it would use
 and lists the others rather than picking silently.
 
-The **Download Plugins** tab is the front end for all of it: their catalogue with versions and release
-dates, whether each plugin is installed in your prefix, whether an installer is already in `~/Downloads`,
-an *Open download page* button (their plugin links need you signed in, so that step is yours), and
-*Install downloaded installer*, one plugin at a time.
+The **Download** tab is the front end for all of it: their catalogue with versions and release dates,
+whether each plugin is installed in your prefix, whether an installer is already in `~/Downloads`, and
+*Download Selected Plugin* (their plugin links need you signed in, so that step is yours). Where the file
+is installed from is the **Pending Install** tab — download here, install there — and the tab order follows
+that flow: Environment, Plugins, Download, Pending Install, Install MSI, Diagnostics.
 
 ## Getting more presets
 
@@ -179,7 +180,7 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 python3 tests/test_core.py                              # pure logic, no prefix needed
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and runs every tab (needs PySide6)
-QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download Plugins tab behaviours
+QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab behaviours
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 ```
@@ -207,7 +208,7 @@ is reported rather than swallowed, a stub "package" is fetched and validated, on
 package is refused before anything is handed over, and "skip this version" is remembered while a manual
 check still shows it.
 
-`tests/gui_downloads_check.py` covers the Download Plugins tab: an idle watch tick must not change the rows
+`tests/gui_downloads_check.py` covers the Download tab: an idle watch tick must not change the rows
 or the selection, a refresh must keep the row you selected, *Download Selected Plugin* must say so when
 nothing is selected, and the right-click menu must offer the actions it claims.
 

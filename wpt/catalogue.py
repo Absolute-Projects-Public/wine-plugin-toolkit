@@ -276,6 +276,6 @@ def render(catalogue: Catalogue, limit: int | None = None) -> str:
             lines.append(f"  ... and {len(releases) - limit} more")
     lines.append("")
     lines.append("Plugin links need you signed in to Neural DSP, so open them in your browser:")
-    lines.append("  wpt catalogue --open <product>      or the Download Plugins tab in the GUI")
+    lines.append("  wpt catalogue --open <product>      or the Download tab in the GUI")
     lines.append("The file lands in ~/Downloads, and `wpt pending` (or that tab) then offers to install it.")
     return "\n".join(lines)

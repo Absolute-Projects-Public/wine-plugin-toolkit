@@ -326,7 +326,7 @@ def cmd_catalogue(args) -> int:
             print(f"{release.product} needs a signed-in download, so wpt cannot fetch it:")
             print(f"  {release.windows}")
             print("  open that in your browser (`wpt catalogue --open`) and let it land in ~/Downloads,")
-            print("  then `wpt install <the file>` - or use the Download Plugins tab.")
+            print("  then `wpt install <the file>` - or use the Pending Install tab in the GUI.")
             return 1
         destination = Path(args.directory).expanduser()
         try:

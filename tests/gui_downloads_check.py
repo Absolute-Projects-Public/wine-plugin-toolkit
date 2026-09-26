@@ -1,4 +1,4 @@
-"""Checks for the Download Plugins tab bugs reported (2026-09-26).
+"""Checks for the Download tab: the bugs reported (2026-09-26) and its staging-tab layout (2026-09-27).
 
 Three behaviours, each named after what was observed:
 
@@ -62,7 +62,6 @@ def main() -> int:
     check("and it is still selected after a refresh", window._selected_product_key(), first)
 
     # --- 1. a tick with nothing new must not touch the table at all
-    window.cb_watch.setChecked(True)
     window._seen_downloads = window._download_candidates()
     before_rows = [
         table.item(r, 0).text() for r in range(table.rowCount())
@@ -89,8 +88,8 @@ def main() -> int:
     menu = window._build_download_menu(selected_release, Path("/home/x/Installer.exe"))
     labels = [action.text() for action in menu.actions()]
     check("the menu offers the download page", "Download Selected Plugin (in browser)" in labels, True)
-    check("the menu offers to install the downloaded installer",
-          any(label.startswith("Install ") for label in labels), True)
+    check("the menu routes an installer to the staging tab instead of installing from here",
+          any(label.startswith("Staged for install:") for label in labels), True)
     check("the menu offers the preset sources",
           any(action.menu() is not None and action.text().startswith("Preset") for action in menu.actions()), True)
     check("the menu offers to copy things",
@@ -99,14 +98,30 @@ def main() -> int:
     check("every preset source is in that submenu", len(sources_menu.actions()) > 3, True)
 
     no_installer = window._build_download_menu(selected_release, None)
-    check("with nothing downloaded, the install action is disabled",
-          any(a.text().startswith("No installer") and not a.isEnabled() for a in no_installer.actions()), True)
+    check("with nothing downloaded, the menu says so and stays disabled",
+          any(a.text().startswith("Not downloaded yet") and not a.isEnabled() for a in no_installer.actions()), True)
 
     # --- the hint above the list
     hint = window.download_hint.text()
     check("the hint tells the user which button to press", "Download Selected Plugin" in hint, True)
     check("and mentions the right-click menu", "right-click" in hint.lower(), True)
     check("and the browse button", "Browse Plugins In Browser" in hint, True)
+
+    # --- the staging layout he asked for (2026-09-26): this tab fetches, Pending Install installs
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    names = [window.tabs.tabText(i) for i in range(window.tabs.count())]
+    check("the tab order is the workflow",
+          names, ["Environment", "Plugins", "Download", "Pending Install", "Install MSI", "Diagnostics"])
+    labels_all = [b.text() for b in window.findChildren(QPushButton)]
+    check("no install button is left on this tab",
+          [x for x in labels_all if "Install downloaded installer" in x], [])
+    check("...and no 'watch ~/Downloads' switch either",
+          [x for x in labels_all if "watch ~/Downloads" in x], [])
+    check("the preset source button is still present and labelled",
+          window.btn_source_open.text(), "Open in browser")
+    check("the change-detected watch tick runs without a switch on it",
+          (window._watch_tick() or "ticked"), "ticked")
 
     window.close()
     app.processEvents()

@@ -9,15 +9,17 @@ Design rules:
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QMenu,
     QCheckBox,
     QComboBox,
@@ -67,7 +69,8 @@ from .scan import scan as scan_prefix
 SCRATCH = Path.home() / ".cache" / "wpt" / "extract"
 
 
-def _fit_columns(table, stretch: dict[int, int] | None = None, contents=(), elide: dict[int, bool] | None = None) -> None:
+def _fit_columns(table, stretch: dict[int, int] | None = None, contents=(), elide: dict[int, bool] | None = None,
+                min_section: int = 64) -> None:
     """Give the long-text columns the room and the short ones only what they need.
 
     A single `Stretch` column took the whole window and clipped the column that actually holds
@@ -77,6 +80,10 @@ def _fit_columns(table, stretch: dict[int, int] | None = None, contents=(), elid
     """
     header = table.horizontalHeader()
     header.setStretchLastSection(False)
+    # A content-sized column collapses to the width of its header text when the table has no rows:
+    # at 900 px the Pending Install table drew Status 40 px, Kind 35 px and Version 50 px, and the
+    # Diagnostics "Status" column was 40 px - which reads as a broken table, not as an empty one.
+    header.setMinimumSectionSize(min_section)
     for column in contents:
         header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     for column, minimum in (stretch or {}).items():
@@ -84,6 +91,78 @@ def _fit_columns(table, stretch: dict[int, int] | None = None, contents=(), elid
         table.setColumnWidth(column, minimum)
     if elide:
         table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+
+
+def _log_pane(placeholder: str, blocks: int = 1000) -> QPlainTextEdit:
+    """A read-only output pane that says what it is *before* a job writes to it.
+
+    Empty, it was a large grey rectangle under the table on Install, Pending and Diagnostics -
+    indistinguishable from a widget that failed to load, and it kept the table from using the
+    height. The placeholder line costs nothing and disappears the moment output arrives.
+    """
+    pane = QPlainTextEdit()
+    pane.setReadOnly(True)
+    pane.setMaximumBlockCount(blocks)
+    pane.setPlaceholderText(placeholder)
+    return pane
+
+
+def _dark_palette() -> QPalette:
+    """A dark palette for machines that are not dark already.
+
+    The window takes the system's own palette by default (KDE's Breeze here), which is what makes
+    it look native. The toggle exists for the other case - someone running a light desktop who
+    prefers this tool dark, or a screenshot that has to be taken in dark mode on any machine - so
+    this is a plain functional palette, deliberately not an attempt to imitate Breeze.
+    """
+    palette = QPalette()
+    window = QColor(49, 54, 59)
+    base = QColor(35, 38, 41)
+    text = QColor(239, 240, 241)
+    palette.setColor(QPalette.ColorRole.Window, window)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.Base, base)
+    palette.setColor(QPalette.ColorRole.AlternateBase, window)
+    palette.setColor(QPalette.ColorRole.Text, text)
+    palette.setColor(QPalette.ColorRole.Button, window)
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.ToolTipBase, base)
+    palette.setColor(QPalette.ColorRole.ToolTipText, text)
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(61, 174, 233))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(252, 252, 252))
+    for role in (QPalette.ColorRole.PlaceholderText, QPalette.ColorRole.Mid,
+                 QPalette.ColorRole.Dark, QPalette.ColorRole.Shadow):
+        palette.setColor(role, QColor(150, 155, 160))
+    for role in (QPalette.ColorRole.Light, QPalette.ColorRole.Midlight):
+        palette.setColor(role, QColor(70, 76, 82))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(140, 145, 150))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(140, 145, 150))
+    return palette
+
+
+def _empty_note(text: str) -> QLabel:
+    """The line shown instead of a table that has no rows.
+
+    An empty QTableWidget is a large empty grid that looks like a widget which failed to load; a
+    sentence in its place says the same thing the table cannot, and the tab stops looking broken
+    before the first scan.
+    """
+    note = QLabel(text)
+    note.setWordWrap(True)
+    note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    note.setMargin(12)
+    note.hide()
+    return note
+
+
+def _show_rows(table, note: QLabel, rows: int) -> None:
+    """Show the table when it has rows, the note when it does not. One or the other, never both."""
+    if rows:
+        note.hide()
+        table.show()
+    else:
+        table.hide()
+        note.show()
 
 
 def _key(text: str) -> str:
@@ -135,22 +214,42 @@ class MainWindow(QMainWindow):
         self._update_busy = False
         self._update_release = None
         self._update_path: Path | None = None
+        # the palette the desktop gave us, kept so the toggle is reversible without a restart
+        self._system_palette = QApplication.palette()
 
-        tabs = QTabWidget()
-        tabs.addTab(self._env_tab(), "Environment")
-        tabs.addTab(self._plugins_tab(), "Plugins")
-        tabs.addTab(self._install_tab(), "Install")
-        tabs.addTab(self._downloads_tab(), "Download Plugins")
-        tabs.addTab(self._pending_tab(), "Pending")
-        tabs.addTab(self._scan_tab(), "Diagnostics")
-        self.setCentralWidget(tabs)
+        # Tab order is the workflow, left to right: what the machine has, what is installed, what
+        # can be fetched, what has landed and is waiting to be installed, the MSI installer itself,
+        # then the diagnostics. (He asked for exactly this order on 2026-09-26.)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._env_tab(), "Environment")
+        self.tabs.addTab(self._plugins_tab(), "Plugins")
+        self.tabs.addTab(self._downloads_tab(), "Download")
+        self.tabs.addTab(self._pending_tab(), "Pending Install")
+        self.tabs.addTab(self._install_tab(), "Install MSI")
+        self.tabs.addTab(self._scan_tab(), "Diagnostics")
+        self.setCentralWidget(self.tabs)
 
         toolbar = QToolBar("Toolkit")
         toolbar.setMovable(False)
+        self.cb_dark = QCheckBox("Dark mode")
+        self.cb_dark.setToolTip(
+            "Use a dark palette instead of the desktop's own. Off by default: the window normally\n"
+            "follows your system theme, which is what makes it look native."
+        )
+        self.cb_dark.toggled.connect(self.apply_theme)
+        toolbar.addWidget(self.cb_dark)
+        toolbar.addSeparator()
+        self.btn_about = QPushButton("Settings & about")
+        self.btn_about.setToolTip("Versions, the paths this toolkit resolved, and the config file")
+        self.btn_about.clicked.connect(lambda _checked=False: self.open_settings())
+        toolbar.addWidget(self.btn_about)
+        toolbar.addSeparator()
         self.btn_check_updates = QPushButton("Check for updates")
         self.btn_check_updates.setToolTip("Ask GitHub whether a newer release exists")
         self.btn_check_updates.clicked.connect(lambda _checked=False: self.check_for_updates(manual=True))
         toolbar.addWidget(self.btn_check_updates)
+        # last: the toolbar above owns the switch this reads the saved value into
+        self.apply_theme()
         self.lbl_update_state = QLabel("")
         toolbar.addWidget(self.lbl_update_state)
         self.addToolBar(toolbar)
@@ -158,9 +257,22 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.aboutToQuit.connect(self._wait_for_jobs)
+        # Screenshot mode: a documented way to take a publishable image on a real desktop (in dark
+        # mode, on his machine). It skips the startup refresh and the update check, and empties the
+        # tables, so the capture shows the interface instead of this machine's plugins.
+        self.screenshot_mode = bool(os.environ.get("WPT_SCREENSHOT_MODE"))
         self.refresh_env()
-        # a quiet check shortly after startup; the result is cached for a day
-        QTimer.singleShot(2500, lambda: self.check_for_updates(manual=False))
+        if self.screenshot_mode:
+            if os.environ.get("WPT_SCREENSHOT_DARK"):
+                # the palette is set without touching the saved setting: a screenshot is not a
+                # preference, and taking one must not switch the user's window to dark
+                self.apply_theme(True, remember=False)
+            # Blanking once is not enough: the startup itself schedules the catalogue load 200 ms
+            # later, which refills the download table from the real ~/Downloads. Settle afterwards.
+            QTimer.singleShot(1500, self._screenshot_settle)
+        else:
+            # a quiet check shortly after startup; the result is cached for a day
+            QTimer.singleShot(2500, lambda: self.check_for_updates(manual=False))
 
     # ------------------------------------------------------------------ updates
     def check_for_updates(self, manual: bool = False) -> None:
@@ -463,6 +575,122 @@ class MainWindow(QMainWindow):
             pass
         event.ignore()
 
+    # ------------------------------------------------------------------ theme & settings
+    def _screenshot_settle(self) -> None:
+        """Last step of `WPT_SCREENSHOT_MODE`: empty the tables again and frame the image.
+
+        A published image is of one tab and the window opens on Environment, so the tab is named
+        rather than clicked: `WPT_SCREENSHOT_TAB=Download` (a label) or an index.
+        """
+        self.blank_machine_state()
+        wanted = os.environ.get("WPT_SCREENSHOT_TAB", "")
+        if wanted:
+            labels = [self.tabs.tabText(i) for i in range(self.tabs.count())]
+            self.tabs.setCurrentIndex(labels.index(wanted) if wanted in labels else int(wanted))
+        self.resize(1200, 760)
+        self.raise_()
+        self.activateWindow()
+
+    def blank_machine_state(self) -> None:
+        """Empty the tables that describe *this* machine, for a screenshot that can be published.
+
+        A render of a real prefix shows which plugins are installed here and which installers have
+        been downloaded, and a README image must not. Used by `WPT_SCREENSHOT_MODE=1` (which also
+        turns off everything that would refill them) and by `tests/render_tabs.py`.
+        """
+        self._watch_timer.stop()
+        self._msi_names = set()
+        self._installed_products = set()
+        self._downloads = {}
+        self._registered_names = lambda: set()
+        self._is_installed = lambda release: ""
+        self._downloads_for = lambda release: None
+        self.download_table.setRowCount(0)
+        self._fill_download_table()
+        self.plugin_table.setRowCount(0)
+        self.plugin_summary.setText("No inventory yet — press 'Refresh inventory'.")
+
+    def apply_theme(self, dark: bool | None = None, *, remember: bool = True) -> None:
+        """Set the palette, and remember the choice in the same config.json the update check uses.
+
+        `dark=None` reads the saved setting, which is what a cold start does: the toggle is
+        restored before the window is shown rather than after, so there is no flash of the wrong
+        theme.
+        """
+        if dark is None:
+            dark = updates_mod.load_config().get("dark_theme") is True
+        # the switch is a view of the setting, so it follows whichever way the value arrived;
+        # blockSignals stops that from re-entering this function through toggled()
+        if self.cb_dark.isChecked() != dark:
+            self.cb_dark.blockSignals(True)
+            self.cb_dark.setChecked(dark)
+            self.cb_dark.blockSignals(False)
+        app = QApplication.instance()
+        if app is not None:
+            app.setPalette(_dark_palette() if dark else self._system_palette)
+        if dark is not None and remember:
+            updates_mod.save_config({"dark_theme": bool(dark)})
+
+    def open_settings(self) -> None:
+        """Versions, resolved paths and the config file - what a bug report needs, in one place."""
+        from . import __version__
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Settings & about")
+        layout = QVBoxLayout(dialog)
+
+        head = QLabel(f"<b>Wine Plugin Toolkit {__version__}</b>")
+        head.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(head)
+
+        form = QFormLayout()
+        resolved = self.env.describe() if self.env else {"prefix": "not detected - see Environment"}
+        for key in ("python", "home", "wine_tree", "prefix", "vst3_dir", "vst2_dir", "aax_dir"):
+            if key in resolved:
+                value = QLabel(str(resolved[key]))
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                form.addRow(key.replace("_", " "), value)
+        config = QLabel(str(updates_mod.config_path()))
+        config.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow("config file", config)
+        layout.addLayout(form)
+
+        check_updates = QCheckBox("Check for updates when the window opens")
+        check_updates.setChecked(updates_mod.update_check_enabled())
+        check_updates.setToolTip(
+            "Saved in the config file above. `WPT_NO_UPDATE_CHECK=1` in the environment overrides it."
+        )
+
+        def remember(checked: bool) -> None:
+            updates_mod.save_config({"update_check": bool(checked)})
+
+        check_updates.toggled.connect(remember)
+        layout.addWidget(check_updates)
+
+        dark = QCheckBox("Dark mode (the header switch does the same thing)")
+        dark.setChecked(self.cb_dark.isChecked())
+        dark.toggled.connect(self.cb_dark.setChecked)
+        layout.addWidget(dark)
+
+        hint = QLabel(
+            "Nothing here is required for the toolkit to work — the update check is the only thing "
+            "that ever reaches the network, and it reads the public releases page."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        repo = QPushButton("Open the project page")
+        repo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(f"https://github.com/{updates_mod.REPO}")))
+        buttons.addWidget(repo)
+        buttons.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(dialog.accept)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+
+        dialog.exec()
+
     def _env_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -524,6 +752,13 @@ class MainWindow(QMainWindow):
         self.btn_uninstall.setEnabled(False)
         self.btn_uninstall.clicked.connect(self.uninstall_selected)
         bar.addWidget(self.btn_uninstall)
+        bar.addStretch(1)
+        layout.addLayout(bar)
+
+        # The two checkboxes go on their own row: seven controls on one line overflowed a 900 px
+        # window and Qt answered by eliding the last button's text to "Uninstall …", which reads
+        # like a different (and destructive-looking) control. Verified in the 900x600 render.
+        bar2 = QHBoxLayout()
         self.cb_purge = QCheckBox("purge registry")
         self.cb_purge.setToolTip(
             "After removing the files, also delete the registry entries that point at them\n"
@@ -531,7 +766,7 @@ class MainWindow(QMainWindow):
             "so 'wpt scan' stops calling it a broken install. It cannot free an activation:\n"
             "deactivate first, or use 'Report as Unusable' in iLok License Manager."
         )
-        bar.addWidget(self.cb_purge)
+        bar2.addWidget(self.cb_purge)
         self.cb_all_exes = QCheckBox("show other .exe files")
         self.cb_all_exes.setToolTip(
             "Also list executables in Program Files that no plugin MSI describes — Wine's own\n"
@@ -539,9 +774,9 @@ class MainWindow(QMainWindow):
             "They are not plugins, so they are hidden by default."
         )
         self.cb_all_exes.stateChanged.connect(lambda _state: self.plugins_done(self.inv) if self.inv else None)
-        bar.addWidget(self.cb_all_exes)
-        bar.addStretch(1)
-        layout.addLayout(bar)
+        bar2.addWidget(self.cb_all_exes)
+        bar2.addStretch(1)
+        layout.addLayout(bar2)
 
         self.plugin_hint = QLabel(
             "Tick a row to select it, then use the buttons above — or <b>right-click a row</b> for repair, "
@@ -566,9 +801,7 @@ class MainWindow(QMainWindow):
         self.plugin_table.customContextMenuRequested.connect(self._plugin_context_menu)
         layout.addWidget(self.plugin_table, 2)
 
-        self.plugin_log = QPlainTextEdit()
-        self.plugin_log.setReadOnly(True)
-        self.plugin_log.setMaximumBlockCount(1000)
+        self.plugin_log = _log_pane("Job output appears here — inventory, repairs, uninstalls and rescans from this tab.", 1000)
         layout.addWidget(self.plugin_log, 1)
         return page
 
@@ -717,17 +950,44 @@ class MainWindow(QMainWindow):
         self.refresh_plugins()
 
     def uninstall_selected(self) -> None:
-        """Remove the whole product: clear the msiexec registration and delete the MSI's files."""
+        """Remove the whole product: clear the msiexec registration and delete the MSI's files.
+
+        The two reads that build the confirmation text (`msi.identity` and `scan.is_registered`) used
+        to run *here*, on the GUI thread, before the dialog opened - the only MSI reads left in the
+        window that could freeze it, and one of the two accepted limitations from the review round.
+        They now run on a worker like every other read, and the dialog opens from the result: the
+        same wording, no blocked event loop.
+        """
         entry = self._selected_entry()
         if not entry or not entry.msi or not self.env:
             return
         msi_path = entry.msi
-        ident = msi_mod.identity(msi_path)
+
+        def check(emit, path):
+            emit(f"reading {Path(path).name} to describe what uninstalling it does …")
+            ident = msi_mod.identity(path)
+            registered = bool(ident.product_code) and scan_mod.is_registered(self.env, ident.product_code)
+            return ident, registered
+
+        self.btn_uninstall.setEnabled(False)
+        self._spawn(
+            check, msi_path,
+            on_line=self.plugin_log.appendPlainText,
+            on_done=lambda pair: self._confirm_uninstall(msi_path, pair[0], pair[1]),
+            log=self.plugin_log,
+            label="uninstall check",
+            restore=(self.btn_uninstall,),
+        )
+
+    def _confirm_uninstall(self, msi_path: Path, ident, registered: bool) -> None:
+        """The dialog, then the job. Runs on the GUI thread but reads nothing from disk."""
+        # the pre-check worker disabled this button; every path that does not go on to run the job
+        # has to hand it back, or a warning or a cancelled dialog leaves a dead button behind
+        self._restore_buttons(self.btn_uninstall)
         label = ident.label
         if not ident.product_code:
             QMessageBox.warning(self, "No ProductCode", f"{msi_path.name} has no ProductCode to uninstall.")
             return
-        registered = scan_mod.is_registered(self.env, ident.product_code)
         purge = self.cb_purge.isChecked()
         answer = QMessageBox.question(
             self,
@@ -914,6 +1174,9 @@ class MainWindow(QMainWindow):
         self.cb_aax = QCheckBox("AAX (Pro Tools only)")
         for box in (self.cb_vst3, self.cb_vst2, self.cb_standalone, self.cb_presets, self.cb_aax):
             opts.addWidget(box)
+        # without this the checkboxes stretch: five widgets, no stretch factor, so Qt hands each of
+        # them a fifth of the window (VST3 hard left, AAX hard right) instead of grouping them
+        opts.addStretch(1)
         layout.addWidget(options)
 
         buttons = QHBoxLayout()
@@ -927,13 +1190,17 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons)
 
         self.install_table = QTableWidget(0, 3)
+        self.install_empty = _empty_note(
+            "No plan yet — pick an installer MSI above, then 'Preview plan' to see exactly which "
+            "files it would place before anything is written."
+        )
+        layout.addWidget(self.install_empty, 2)
+        _show_rows(self.install_table, self.install_empty, 0)
         self.install_table.setHorizontalHeaderLabels(["Status", "Path", "Detail"])
         _fit_columns(self.install_table, stretch={1: 300, 2: 220}, contents=(0,), elide={1: True})
         layout.addWidget(self.install_table, 2)
 
-        self.install_log = QPlainTextEdit()
-        self.install_log.setReadOnly(True)
-        self.install_log.setMaximumBlockCount(2000)
+        self.install_log = _log_pane("Job output appears here — the plan, the destination list and every verified file.", 2000)
         layout.addWidget(self.install_log, 1)
         return page
 
@@ -1014,6 +1281,7 @@ class MainWindow(QMainWindow):
             self.install_table.setItem(row, 0, QTableWidgetItem(status))
             self.install_table.setItem(row, 1, QTableWidgetItem(path))
             self.install_table.setItem(row, 2, QTableWidgetItem(note))
+        _show_rows(self.install_table, self.install_empty, self.install_table.rowCount())
 
         self._log_plan_warnings(plan, self.log)
 
@@ -1065,18 +1333,11 @@ class MainWindow(QMainWindow):
         )
         open_page.clicked.connect(lambda *_args: self.download_selected_plugin())
         bar.addWidget(open_page)
-        self.btn_download_install = QPushButton("Install downloaded installer")
-        self.btn_download_install.setEnabled(False)
-        self.btn_download_install.setToolTip(
-            "Runs the selected plugin's installer: the vendor .exe is bridged to its MSI (running it\n"
-            "under Wine if that is what it takes), then the payload is placed and verified. One at a time."
-        )
-        self.btn_download_install.clicked.connect(self.install_downloaded)
-        bar.addWidget(self.btn_download_install)
-        self.cb_watch = QCheckBox("watch ~/Downloads")
-        self.cb_watch.setChecked(True)
-        self.cb_watch.setToolTip("Notice a finished download and offer to install it, without leaving this tab.")
-        bar.addWidget(self.cb_watch)
+        # "Install downloaded installer" and the "watch ~/Downloads" checkbox used to live here.
+        # Installs now happen on the Pending Install tab - this tab fetches, that tab stages and
+        # installs - so the row is three buttons instead of five controls. The change-detected
+        # refresh stays and no longer needs a switch: it is what keeps the "Installer" column
+        # current, and Pending Install reads the same ~/Downloads state.
         bar.addStretch(1)
         layout.addLayout(bar)
 
@@ -1092,10 +1353,8 @@ class MainWindow(QMainWindow):
         self.source_combo.setMinimumWidth(320)
         self.source_combo.currentIndexChanged.connect(lambda index: self._source_changed(index))
         presets_bar.addWidget(self.source_combo)
-        self.btn_source_note = QLabel("")
-        self.btn_source_note.setWordWrap(True)
-        self.btn_source_note.setStyleSheet("color: palette(mid);")
-        presets_bar.addWidget(self.btn_source_note, 1)
+        # The button belongs *next to* the combo it acts on. It used to sit at the far right of a
+        # stretch, with nothing tying it to the row's label - read as an unanchored control.
         self.btn_source_open = QPushButton("Open in browser")
         self.btn_source_open.setToolTip(
             "Opens the selected source in your own browser — nothing is downloaded by the toolkit.\n"
@@ -1104,20 +1363,25 @@ class MainWindow(QMainWindow):
         )
         self.btn_source_open.clicked.connect(self.open_source)
         presets_bar.addWidget(self.btn_source_open)
+        presets_bar.addSpacing(16)
+        self.btn_source_note = QLabel("")
+        self.btn_source_note.setWordWrap(True)
+        self.btn_source_note.setStyleSheet("color: palette(mid);")
+        presets_bar.addWidget(self.btn_source_note, 1)
         layout.addLayout(presets_bar)
 
         self.download_summary = QLabel(
-            "Neural DSP installers. Pick a plugin, open its page, download it, then install it from here —\n"
-            "the .exe → .msi step is handled for you."
+            "Neural DSP installers. Pick a plugin and open its page in your browser — the download\n"
+            "lands in ~/Downloads, and the Pending Install tab installs it from there (the .exe → .msi\n"
+            "step is handled for you)."
         )
         self.download_summary.setWordWrap(True)
         layout.addWidget(self.download_summary)
 
         self.download_hint = QLabel(
-            "Click a plugin, then <b>Download Selected Plugin</b> to fetch it (their plugin links need you "
-            "signed in) — or <b>Browse Plugins In Browser</b> for their full downloads list. "
-            "<b>Right-click a row</b> for the same actions plus the preset &amp; IR sites. Any installer "
-            "that lands in ~/Downloads is offered here to install."
+            "Click a plugin, then <b>Download Selected Plugin</b> (their links need you signed in) — or "
+            "<b>Browse Plugins In Browser</b> for their full list. <b>Right-click a row</b> for the preset "
+            "&amp; IR sites. Downloaded installers show up on the <b>Pending Install</b> tab."
         )
         self.download_hint.setWordWrap(True)
         self.download_hint.setTextFormat(Qt.TextFormat.RichText)
@@ -1131,14 +1395,11 @@ class MainWindow(QMainWindow):
         # product column rather than whatever Product left over
         _fit_columns(self.download_table, stretch={0: 220, 4: 320}, contents=(1, 2, 3), elide={4: True})
         self.download_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.download_table.itemSelectionChanged.connect(self._download_selection_changed)
         self.download_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.download_table.customContextMenuRequested.connect(self._download_context_menu)
         layout.addWidget(self.download_table, 3)
 
-        self.download_log = QPlainTextEdit()
-        self.download_log.setReadOnly(True)
-        self.download_log.setMaximumBlockCount(1000)
+        self.download_log = _log_pane("Job output appears here — catalogue refreshes and installer downloads.", 1000)
         layout.addWidget(self.download_log, 1)
 
         self._downloads: dict[str, Path] = {}
@@ -1282,7 +1543,7 @@ class MainWindow(QMainWindow):
                         if key not in before:
                             self.download_log.appendPlainText(f"found a new installer: {path}")
                             self.download_log.appendPlainText(
-                                "  select it and press Install downloaded installer")
+                                "  it is now listed on the Pending Install tab")
 
             def failed(message):
                 self._downloads_scan_running = False
@@ -1373,7 +1634,7 @@ class MainWindow(QMainWindow):
         at times... it either does nothing or opens it, result changes randomly"*). Now the tick
         only acts when the set of files in ~/Downloads actually changes.
         """
-        if not self.cb_watch.isChecked() or not self.env:
+        if not self.env:
             return
         candidates = self._download_candidates()
         if candidates == self._seen_downloads:
@@ -1410,10 +1671,11 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(lambda: self.download_selected_plugin(release))
 
         if installer:
-            install_action = menu.addAction(f"Install {installer.name}")
-            install_action.triggered.connect(self.install_downloaded)
+            stage_action = menu.addAction(f"Staged for install: {installer.name}")
+            stage_action.setToolTip("Opens the Pending Install tab, where installers are installed from")
+            stage_action.triggered.connect(self.goto_pending)
         else:
-            hint = menu.addAction("No installer downloaded yet")
+            hint = menu.addAction("Not downloaded yet")
             hint.setEnabled(False)
 
         menu.addSeparator()
@@ -1462,9 +1724,10 @@ class MainWindow(QMainWindow):
         installer = cell.data(Qt.ItemDataRole.UserRole + 1)
         return release, Path(installer) if installer else None
 
-    def _download_selection_changed(self) -> None:
-        release, installer = self._selected_release()
-        self.btn_download_install.setEnabled(bool(installer) and self.env is not None)
+    def goto_pending(self) -> None:
+        """Jump to the staging tab - the one place installers are installed from."""
+        self.tabs.setCurrentWidget(self.tabs.widget(3))
+        self.refresh_pending()
 
     # ------------------------------------------------------------------ preset sources
     def _source_changed(self, _index: int | None = None) -> None:
@@ -1542,73 +1805,6 @@ class MainWindow(QMainWindow):
                 "  sign in if it asks - the download lands in ~/Downloads and this tab picks it up"
             )
 
-    def install_downloaded(self) -> None:
-        release, installer = self._selected_release()
-        if installer is None or not self.env:
-            return
-        answer = QMessageBox.question(
-            self,
-            "Install plugin",
-            f"Install {release.product} from\n{installer.name}?\n\n"
-            "If that is the vendor's .exe, its MSI is extracted first — if it has to be run under Wine "
-            "to produce one, a vendor installer window will open and may take a few minutes. "
-            "Installers are handled one at a time.",
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self.btn_download_install.setEnabled(False)
-        self._busy(True)
-
-        def job(emit, installer):
-            emit(f"{installer.name}: working out how to get an MSI out of it ...")
-            prepared = wrappers_mod.prepare_msi(
-                self.env,
-                installer,
-                SCRATCH,
-                product_hint=release.product,
-                allow_wine=True,
-                log=emit,
-            )
-            if not prepared.ok:
-                raise RuntimeError(prepared.detail)
-            emit(f"MSI: {prepared.msi}")
-            msi_mod.extract(prepared.msi, SCRATCH)
-            plan = build_plan(prepared.msi, self.env, SCRATCH)
-            rows = apply_plan(plan, self.env, dry_run=False)
-            bad = [c for c in verify_plan(plan) if c[0] != "ok"]
-            return plan, rows, bad
-
-        self._spawn(
-            job, installer,
-            on_line=self.download_log.appendPlainText,
-            on_done=self.install_downloaded_done,
-            on_failed=lambda msg: (self.install_downloaded_failed(msg), self.refresh_plugins()),
-            log=self.download_log,
-            label="install",
-            restore=(self.btn_download_install,),
-        )
-
-    def install_downloaded_done(self, result) -> None:
-        plan, rows, bad = result
-        self._log_plan_warnings(plan, self.download_log.appendPlainText)
-        for status, path, note in rows:
-            self.download_log.appendPlainText(f"{status}: {path} {note}".strip())
-        self.download_log.appendPlainText(
-            f"{len(rows)} destination(s) written, {len(bad)} failing verification"
-            + ("" if not bad else ": " + ", ".join(p for _, p, _ in bad))
-        )
-        self.download_log.appendPlainText("rescan plugins in your DAW for the new plugin to appear")
-        self._busy(False)
-        self.btn_download_install.setEnabled(True)
-        self.refresh_downloads()
-        self.refresh_plugins()
-
-    def install_downloaded_failed(self, message: str) -> None:
-        self.download_log.appendPlainText(f"FAILED: {message}")
-        QMessageBox.critical(self, "Install failed", message)
-        self._busy(False)
-        self.btn_download_install.setEnabled(True)
-
     # -------------------------------------------------------------- pending
     def _pending_tab(self) -> QWidget:
         page = QWidget()
@@ -1634,13 +1830,17 @@ class MainWindow(QMainWindow):
         self.pending_table = QTableWidget(0, 5)
         self.pending_table.setHorizontalHeaderLabels(["Status", "Product", "Version", "Kind", "File"])
         _fit_columns(self.pending_table, stretch={4: 300}, contents=(0, 1, 2, 3), elide={4: True})
+        self.pending_empty = _empty_note(
+            "No installers waiting — press 'Find downloaded installers' to look in ~/Downloads "
+            "and the prefix root for .msi / .exe files."
+        )
+        layout.addWidget(self.pending_empty, 2)
+        _show_rows(self.pending_table, self.pending_empty, 0)
         self.pending_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.pending_table.itemSelectionChanged.connect(self._pending_selection_changed)
         layout.addWidget(self.pending_table, 3)
 
-        self.pending_log = QPlainTextEdit()
-        self.pending_log.setReadOnly(True)
-        self.pending_log.setMaximumBlockCount(1000)
+        self.pending_log = _log_pane("Nothing scanned yet — press 'Find downloaded installers'. Output appears here.", 1000)
         layout.addWidget(self.pending_log, 1)
         return page
 
@@ -1675,6 +1875,7 @@ class MainWindow(QMainWindow):
                 cell = QTableWidgetItem(text)
                 cell.setData(Qt.ItemDataRole.UserRole, item)
                 self.pending_table.setItem(row, column, cell)
+        _show_rows(self.pending_table, self.pending_empty, len(found))
         waiting = [i for i in found if i.installed is None]
         self.pending_summary.setText(
             f"{len(found)} installer(s) found   ·   {len(waiting)} not installed yet"
@@ -1781,13 +1982,17 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.scan_summary)
 
         self.scan_table = QTableWidget(0, 2)
+        self.scan_empty = _empty_note(
+            "Nothing scanned yet — 'Scan prefix for broken installs' lists every plugin path the "
+            "registry records and whether the file is actually on disk."
+        )
+        layout.addWidget(self.scan_empty, 1)
+        _show_rows(self.scan_table, self.scan_empty, 0)
         self.scan_table.setHorizontalHeaderLabels(["Status", "Registry path"])
         _fit_columns(self.scan_table, stretch={1: 320}, contents=(0,), elide={1: True})
         layout.addWidget(self.scan_table, 1)
 
-        self.scan_products = QPlainTextEdit()
-        self.scan_products.setReadOnly(True)
-        self.scan_products.setMaximumBlockCount(500)
+        self.scan_products = _log_pane("Nothing triaged yet — 'Triage products' lists every product in every prefix here.", 500)
         layout.addWidget(self.scan_products, 1)
         return page
 
@@ -1819,6 +2024,7 @@ class MainWindow(QMainWindow):
             self.scan_table.insertRow(row)
             self.scan_table.setItem(row, 0, QTableWidgetItem("present" if entry.exists else "MISSING"))
             self.scan_table.setItem(row, 1, QTableWidgetItem(entry.raw))
+        _show_rows(self.scan_table, self.scan_empty, len(report.entries))
         # runtimes and services carry a DisplayName too; listing eighty of them buries
         # the four products anyone is actually looking for
         products = [p for p in report.products if not scan_mod.is_system_product(p.get("DisplayName", ""))]

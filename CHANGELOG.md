@@ -3,6 +3,36 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## 0.6.3
+
+GUI pass: the workflow is now left-to-right, and the tabs say what they do.
+
+- **Tab order and names**: Environment · Plugins · **Download** · **Pending Install** · **Install MSI** ·
+  Diagnostics. Downloading and installing are two steps, so they are two tabs — *Install downloaded
+  installer* and the *watch ~/Downloads* switch are gone from the browse tab, and every install now
+  goes through Pending Install. (The change-detected refresh stayed: it no longer needs a switch.)
+- ***Open in browser* sits next to the dropdown it acts on** in the *Preset & IR sources* row, instead
+  of at the far right of the window with nothing tying it to the label.
+- **A tab with nothing in it explains itself** instead of showing a large empty grid: Pending Install,
+  Install MSI and Diagnostics say what to press, and the table appears the moment it has rows.
+- **Columns keep a minimum width**, so a table with no rows no longer collapses Status to 40 px and
+  Kind to 35 px.
+- **The five "What to install" checkboxes are grouped**, not spread across the whole window.
+- **Dark mode is a header switch** (and a line in Settings). Off by default — the window follows your
+  desktop theme, which is what makes it look native; the switch is for the other case, and it applies
+  immediately without a restart. The choice is remembered in `~/.config/wpt/config.json`.
+- **Settings & about** opens a dialog with the version, every path the toolkit resolved and the config
+  file — what a bug report needs. The update-check toggle lives there too.
+- **The uninstall confirmation no longer reads the MSI on the GUI thread** — the last of the two
+  accepted limitations from the review round. The dialog says the same thing; the window cannot freeze
+  on the way to it.
+- `tests/render_tabs.py` renders any tab at any size, reads the tab labels from the window (a
+  hardcoded list was already naming the wrong tab), and its `neutral` mode blanks before every grab, so
+  a published image cannot show which plugins the machine that rendered it happens to have.
+- `WPT_SCREENSHOT_MODE=1` (+ `WPT_SCREENSHOT_TAB`, `WPT_SCREENSHOT_DARK`) takes a publishable capture
+  on a real desktop; `tests/gui_layout_check.py` covers the empty states, the column floors and the
+  dark switch.
+
 ## 0.6.2
 
 - Test-only: the GUI update-check suite asserted a hardcoded version, so running the suites from the

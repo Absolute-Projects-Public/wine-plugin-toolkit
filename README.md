@@ -5,7 +5,7 @@ ableton-linux setup (Neural DSP plugins on CachyOS/Arch) and verified against re
 there; other prefixes and vendors are triaged read-only rather than promised. Bug reports
 welcome — `wpt doctor` (below) prints most of what is needed for one.
 
-![Download Plugins tab](docs/download-plugins.png)
+![Download tab](docs/download-tab.png)
 
 
 Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
@@ -98,12 +98,11 @@ python3 -m wpt.cli catalogue --open "nolly"  # open that plugin's download page 
 python3 -m wpt.cli catalogue --download "Cortex Control"   # public CDN links only (hardware/manuals)
 ```
 
-In the GUI that is the **Download Plugins** tab — click a plugin and press *Download Selected Plugin* (or *Browse Plugins In
-Browser* for their full list), or **right-click a row** for the same actions plus the preset & IR sites, copy-name/path/link, and installing
-whatever installer has already landed in `~/Downloads`. The list only redraws when the files in `~/Downloads`
-actually change, so a refresh never steals the row you just clicked. Same thing: pick a plugin, *Open
-download page* (it opens in your
-browser), download it, and the tab notices it in `~/Downloads` and installs it for you — one plugin at a
+In the GUI that is the **Download** tab — click a plugin and press *Download Selected Plugin* (or *Browse Plugins In
+Browser* for their full list), or **right-click a row** for the same actions plus the preset & IR sites, copy-name/path/link, and a jump to
+the staging tab. The list only redraws when the files in `~/Downloads` actually change, so a refresh never steals the row you just clicked.
+Same thing: pick a plugin, *Download Selected Plugin* opens its page (in your
+browser), you download it, and the **Pending Install** tab installs it for you — one plugin at a
 time.
 
 **Why the tool opens a page instead of downloading for you:** Neural DSP's plugin links require being signed
@@ -232,7 +231,7 @@ repositories want a sign-in, one vault sits behind a bot filter, and the shops w
 open the right page in **your** browser, pre-filled with the plugin you are looking at. Six sources ship: the
 Preset Junkie community repository, the Neural DSP forum's per-plugin preset threads (searchable per plugin),
 Honest Amp Sims' free Preset Vault, the r/NeuralDSP sharing thread, and two paid pack shops. The GUI has the
-same thing as a *Preset & IR sources* row in the Download Plugins tab. Where a site's search URL could not be
+same thing as a *Preset & IR sources* row in the Download tab. Where a site's search URL could not be
 verified, no search parameter is invented — you get the front page.
 
 ### Sorting out a machine that has been through failed installs
@@ -292,12 +291,12 @@ Six tabs, all thin wrappers over the same core functions as the CLI:
   a results table and log, ending with the byte-for-byte verification
 - **Pending** — installers sitting in `~/Downloads` or the prefix root that are not installed yet (or
   are an upgrade), with *Install selected* doing the same extract → place → verify as the CLI
-- Both the **Plugins** and **Download Plugins** tables have a right-click menu with the same shape:
-  repair/uninstall/enable-disable on one side, open-page/install/preset-sources on the other, plus copy
+- Both the **Plugins** and **Download** tables have a right-click menu with the same shape:
+  repair/uninstall/enable-disable on one side, open-page/staged-icon/preset-sources on the other, plus copy
   actions (name, path, link) and *Show in file manager*.
-- **Download Plugins** — Neural DSP's catalogue: version, release date, whether it is installed here,
-  whether an installer is already in `~/Downloads`; *Open download page*, *Refresh catalogue*, a
-  `watch ~/Downloads` checkbox, and *Install downloaded installer* (one at a time)
+- **Download** — Neural DSP's catalogue: version, release date, whether it is installed here,
+  whether an installer is already in `~/Downloads`; *Refresh catalogue*, *Download Selected Plugin*, and a
+  *Preset & IR sources* row whose button sits with its dropdown
 - **Diagnostics** — scans the prefix registry for plugin paths that do not exist on disk, lists the
   products it registers (runtimes hidden), and a *Triage products in every Wine prefix* button that
   reports what every prefix on the machine holds and which entries are debris
