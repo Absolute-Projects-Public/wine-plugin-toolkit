@@ -259,6 +259,29 @@ def cmd_install(args) -> int:
     return 0
 
 
+def open_in_browser(url: str, timeout: int = 15) -> bool:
+    """Open a URL with the desktop's handler, honestly.
+
+    `xdg-open` is not guaranteed to exist, and it can block; a command that prints "opened"
+    regardless is worse than one that says it could not. The GUI uses QDesktopServices, whose
+    result is checked, and this is the CLI's equivalent.
+    """
+    import webbrowser
+    try:
+        if webbrowser.open(url):
+            return True
+    except Exception:  # noqa: BLE001 - any failure here means "could not open"
+        pass
+    opener = shutil.which("xdg-open")
+    if not opener:
+        return False
+    try:
+        proc = subprocess.run([opener, url], timeout=timeout, capture_output=True)
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def cmd_catalogue(args) -> int:
     if getattr(args, "open_page", False):
         import webbrowser
@@ -267,7 +290,12 @@ def cmd_catalogue(args) -> int:
         print(f"{'opened' if opened else 'could not open'} {catalogue_mod.DOWNLOADS_URL}")
         return 0
 
-    catalogue = catalogue_mod.refresh(log=print) if args.refresh else catalogue_mod.load_snapshot()
+    try:
+        catalogue = (catalogue_mod.refresh(log=print) if args.refresh
+                     else catalogue_mod.load_snapshot())
+    except catalogue_mod.CatalogueError as exc:
+        print(f"could not read the catalogue: {exc}", file=sys.stderr)
+        return 1
     if not catalogue.releases:
         print("no catalogue available (bundled snapshot missing) - try --refresh", file=sys.stderr)
         return 1
@@ -282,7 +310,9 @@ def cmd_catalogue(args) -> int:
         print(f"  {release.windows}")
         if release.needs_sign_in:
             print("  Neural DSP requires you to be signed in before it hands over the file.")
-        subprocess.run(["xdg-open", release.windows], check=False)
+        if not open_in_browser(release.windows):
+            print(f"  could not open a browser - open it yourself: {release.windows}", file=sys.stderr)
+            return 1
         print("  opened in your browser; the download lands in ~/Downloads")
         return 0
 
@@ -299,7 +329,11 @@ def cmd_catalogue(args) -> int:
             print("  then `wpt install <the file>` - or use the Download Plugins tab.")
             return 1
         destination = Path(args.directory).expanduser()
-        path = catalogue_mod.download(release.windows, destination, log=print)
+        try:
+            path = catalogue_mod.download(release.windows, destination, log=print)
+        except catalogue_mod.CatalogueError as exc:
+            print(f"download failed: {exc}", file=sys.stderr)
+            return 1
         print(f"\n{path}")
         return 0
 
@@ -333,7 +367,7 @@ def cmd_catalogue(args) -> int:
 
 
 def cmd_presets(args) -> int:
-    # where to get *more* presets: nothing is fetched, the page opens in his own browser
+    # where to get *more* presets: nothing is fetched, the page opens in your own browser
     if getattr(args, "sources", False) or getattr(args, "open", None):
         if args.open:
             opened, url = sources_mod.open_source(args.open, args.product or "")
@@ -867,8 +901,12 @@ def cmd_wrappers(args) -> int:
             if not directory.is_dir():
                 continue
             for path in sorted(directory.glob("*.exe")):
-                if path.stat().st_size > args.min_size * 1024 * 1024:
-                    targets.append(path)
+                try:
+                    if path.stat().st_size <= args.min_size * 1024 * 1024:
+                        continue
+                except OSError:
+                    continue        # gone since the listing
+                targets.append(path)
         if not targets:
             print(f"no .exe wrappers over {args.min_size} MB in ~/Downloads or the prefix root")
             return 0
@@ -1106,6 +1144,17 @@ def main(argv: list[str] | None = None) -> int:
     except msi_mod.MsiError as exc:
         print(f"msi error: {exc}", file=sys.stderr)
         return 4
+    except catalogue_mod.CatalogueError as exc:
+        print(f"catalogue error: {exc}", file=sys.stderr)
+        return 5
+    except subprocess.TimeoutExpired as exc:
+        # a hung external tool must not surface as a traceback
+        print(f"timed out: {' '.join(str(part) for part in (exc.cmd or []))} "
+              f"did not finish within {exc.timeout}s", file=sys.stderr)
+        return 4
+    except OSError as exc:
+        print(f"system error: {exc}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130

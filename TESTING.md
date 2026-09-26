@@ -19,14 +19,14 @@ Nothing here is destructive unless you ask for it. Every command that changes so
 Arch/CachyOS:
 
 ```bash
-sudo pacman -U wine-plugin-toolkit-0.3.0-1-any.pkg.tar.zst
+sudo pacman -U wine-plugin-toolkit-*-1-any.pkg.tar.zst
 wpt --version
 ```
 
 Anything else, from the source tarball:
 
 ```bash
-tar xzf wpt-0.3.0.tar.gz && cd wpt-0.3.0
+tar xzf wpt-*.tar.gz && cd wine-plugin-toolkit-*
 pip install .              # console script `wpt`
 pip install '.[gui]'       # adds `wpt-gui`
 ```
@@ -41,7 +41,7 @@ wpt list         # inventory: every plugin file, with its size checked against t
 wpt scan         # registry vs disk: installs that registered but never copied their files
 wpt products     # triage of every Wine prefix on the machine, newest install first
 wpt presets      # your presets and downloaded packs, per product
-wpt-gui          # the GUI: Environment, Plugins, Install, Pending, Diagnostics
+wpt-gui          # the GUI: Environment, Plugins, Install, Download Plugins, Pending, Diagnostics
 ```
 
 Worth knowing what "good" looks like: `env` resolves every path, `list` shows sizes matching the MSI
@@ -50,7 +50,7 @@ failure this tool exists for — send that output.
 
 ## What to report back
 
-- your distro, Python and Wine-tree version (`wpt env` shows the last two)
+- your distro, Python and Wine-tree version (`wpt env` shows both, plus the toolkit version)
 - the output of `wpt list --json` and `wpt products --json` — machine-readable and safe to paste
 - anything that crashed, with the traceback
 - whether the GUI opened and every tab rendered
@@ -180,9 +180,14 @@ python3 tests/test_core.py                              # pure logic, no prefix 
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and runs every tab (needs PySide6)
 QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download Plugins tab behaviours
+QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
+QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 ```
 
-`tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception —
+`tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception.
+The install/uninstall/repair buttons are clicked too, with `apply_plan`, `uninstall_product` and
+`purge_registry` replaced by recording stubs, so the handlers run for real (that is where the wiring
+bugs live) while nothing can reach the prefix. Only buttons that open a modal dialog are skipped —
 it exists because a `clicked` signal once handed a `checked` bool to a slot that took a release and crashed.
 `tests/render_tabs.py` renders tabs to PNG so you can *look* at the layout instead of describing it.
 
@@ -190,6 +195,17 @@ it exists because a `clicked` signal once handed a `checked` bool to a slot that
 QT_QPA_PLATFORM=offscreen python3 tests/gui_buttons_check.py
 QT_QPA_PLATFORM=offscreen python3 tests/render_tabs.py /tmp   # writes /tmp/tab-*.png
 ```
+
+`tests/gui_job_decline_check.py` covers the job plumbing: a second action while another job is running
+must explain the decline **and** leave its buttons and status line usable (they used to stay disabled,
+claiming work that never started), and the install job must receive its four options as plain values
+read on the GUI thread rather than calling `isChecked()` from the worker thread.
+
+`tests/gui_update_check.py` covers the update flow without touching the network: the startup check is
+suppressed by `WPT_NO_UPDATE_CHECK=1`, a newer release is announced, an older one is not, a failed check
+is reported rather than swallowed, a stub "package" is fetched and validated, one that is not a pacman
+package is refused before anything is handed over, and "skip this version" is remembered while a manual
+check still shows it.
 
 `tests/gui_downloads_check.py` covers the Download Plugins tab: an idle watch tick must not change the rows
 or the selection, a refresh must keep the row you selected, *Download Selected Plugin* must say so when

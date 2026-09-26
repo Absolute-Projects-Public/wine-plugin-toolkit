@@ -37,7 +37,13 @@ def require_tools() -> None:
 
 def _run(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
     require_tools()
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise MsiError(f"{args[0]} did not finish within {timeout}s reading this installer "
+                       "— the file may be corrupt or on a stalled mount") from exc
+    except OSError as exc:
+        raise MsiError(f"could not run {args[0]}: {exc}") from exc
     if proc.returncode != 0 and "table not found" not in (proc.stderr or ""):
         raise MsiError(f"{' '.join(args)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc
@@ -150,6 +156,14 @@ def payload_files(msi: Path) -> list[PayloadFile]:
     The FileSize column is what makes verification possible -- if a file on disk
     has a different size, the install did not really complete.
     """
+    # Read the Component table *once*. It used to be exported inside the loop, which meant one
+    # msitools process per File row - hundreds of them for a real installer, for a value that is
+    # only informational.
+    try:
+        directory_of = {r[0]: r[2] for r in export_table(msi, "Component") if len(r) >= 3}
+    except MsiError:
+        directory_of = {}
+
     out: list[PayloadFile] = []
     for row in export_table(msi, "File"):
         if len(row) < 4:
@@ -160,14 +174,8 @@ def payload_files(msi: Path) -> list[PayloadFile]:
             size = int(row[3])
         except ValueError:
             size = 0
-        directory = ""
-        try:
-            dir_rows = export_table(msi, "Component")
-            mapping = {r[0]: r[2] for r in dir_rows if len(r) >= 3}
-            directory = mapping.get(row[1], "")
-        except MsiError:
-            pass
-        out.append(PayloadFile(name=long_name, size=size, component=row[1], directory=directory))
+        out.append(PayloadFile(name=long_name, size=size, component=row[1],
+                               directory=directory_of.get(row[1], "")))
     return out
 
 
@@ -240,7 +248,7 @@ def find_extracted_msis(
 
     `include_installer_cache` adds **Wine's own msiexec cache**, `drive_c/windows/Installer/`,
     where Windows Installer keeps a copy of every MSI a product registered with it. That is
-    the only copy some products leave behind: Fortin Cali Suite 2.0.1 installs from the
+    the only copy some products leave behind: a product installed by running its vendor wrapper
     vendor wrapper without ever writing an MSI into its own vendor folder, so its
     `Installer/d80a.msi` is what makes it verifiable, repairable and removable at all
     (found 2026-09-26, after the GUI greyed the uninstall button out for it).
@@ -265,7 +273,13 @@ def find_extracted_msis(
                 # anyone reads a File table
                 continue
             found.append(path)
-    return sorted(set(found), key=lambda p: p.stat().st_mtime, reverse=True)
+    def _stamp(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0          # unreadable now; keep it in the list but sort it last
+
+    return sorted(set(found), key=_stamp, reverse=True)
 
 
 def stage_msi(msi: Path, scratch: Path) -> Path:
@@ -274,7 +288,7 @@ def stage_msi(msi: Path, scratch: Path) -> Path:
     `msiexec /x` removes the copy of the package Windows Installer keeps in
     `drive_c/windows/Installer/` — and on this stack that cache is often the only copy a product
     has. Read the file list after running msiexec and it is simply not there any more: that is
-    exactly what happened to a Fortin Cali Suite uninstall on 2026-09-26, which removed
+    exactly what happens on an uninstall, which removed
     `d80a.msi` and then failed to read it, leaving the presets and registry entries behind.
 
     The copy goes to a **sibling** of the scratch dir, because `extract()` empties its scratch
@@ -321,10 +335,18 @@ def prepare_scratch(dest: Path) -> Path:
     data is refused rather than emptied.
     """
     dest = Path(dest)
+    resolved = dest.resolve()
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    # `Path.is_relative_to` is True for *equal* paths, so without this the shared temp directory
+    # itself counted as "scratch-like" and `--scratch /tmp` would delete every other program's
+    # live temp files. The temp root and the home directory are never ours to remove.
+    protected = {Path("/"), temp_root, Path.home().resolve(), Path.home().resolve() / ".cache"}
+    if resolved in protected:
+        raise MsiError(f"{dest} is a shared directory, not a scratch directory - refusing to empty it")
     if dest.exists() and any(dest.iterdir()):
         ours = (dest / EXTRACT_MARKER).is_file()
-        scratch_like = dest.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()) or (
-            Path.home() / ".cache" in dest.resolve().parents
+        scratch_like = (resolved != temp_root and resolved.is_relative_to(temp_root)) or (
+            Path.home().resolve() / ".cache" in resolved.parents
         )
         if not (ours or scratch_like):
             raise MsiError(
@@ -349,9 +371,15 @@ def extract(msi: Path, dest: Path, *, clean: bool = True) -> Path:
         prepare_scratch(dest)
     else:
         dest.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        ["msiextract", "-C", str(dest), str(msi)], capture_output=True, text=True, timeout=900
-    )
+    try:
+        proc = subprocess.run(
+            ["msiextract", "-C", str(dest), str(msi)], capture_output=True, text=True, timeout=900
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MsiError("msiextract did not finish within 900s — a 400 MB payload on a slow disk can "
+                       "take a while, but this usually means the installer is corrupt") from exc
+    except OSError as exc:
+        raise MsiError(f"could not run msiextract: {exc}") from exc
     if proc.returncode != 0:
         raise MsiError(f"msiextract failed ({proc.returncode}): {proc.stderr.strip()}")
     return dest

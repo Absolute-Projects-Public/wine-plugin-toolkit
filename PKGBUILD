@@ -23,13 +23,27 @@ options=('!strip')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')   # replaced with the real hash once the tag exists (packaging/release.sh does it)
 
+check() {
+    # The core suites are stdlib-only, so they run wherever this package is built.
+    # The four GUI suites need PySide6 (an optdepend) and an offscreen Qt platform:
+    #   QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py   (and the other three)
+    cd "$srcdir/$pkgname-$pkgver"
+    python3 tests/test_core.py
+    python3 tests/test_prefix_integration.py
+}
+
 package() {
     install -d "$pkgdir/usr/lib/wpt"
     cp -r "$srcdir/$pkgname-$pkgver/wpt" "$pkgdir/usr/lib/wpt/"
+    # check() runs the test suite in $srcdir, which leaves __pycache__ behind; bytecode has no
+    # business in a package (pacman regenerates it, or does not - either way it is not ours to ship)
+    find "$pkgdir" -type d -name __pycache__ -prune -exec rm -rf {} +
 
     install -Dm644 "$srcdir/$pkgname-$pkgver/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 "$srcdir/$pkgname-$pkgver/TESTING.md" "$pkgdir/usr/share/doc/$pkgname/TESTING.md"
     install -Dm644 "$srcdir/$pkgname-$pkgver/pyproject.toml" "$pkgdir/usr/share/doc/$pkgname/pyproject.toml"
+    # the README embeds these two images; without them the packaged docs have broken links
+    cp -r "$srcdir/$pkgname-$pkgver/docs" "$pkgdir/usr/share/doc/$pkgname/"
 
     install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt" "$pkgdir/usr/bin/wpt"
     install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt-gui" "$pkgdir/usr/bin/wpt-gui"

@@ -7,6 +7,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 VERSION=$(python3 -c "import sys; sys.path.insert(0,'.'); import wpt; print(wpt.__version__)")
+ROOT=$(pwd)
 
 bash packaging/make-tarball.sh
 cp "dist/wpt-$VERSION.tar.gz" .
@@ -14,10 +15,15 @@ cp "dist/wpt-$VERSION.tar.gz" .
 WORK=$(mktemp -d /tmp/wpt-local-build-XXXX)
 trap 'rm -rf "$WORK"' EXIT
 cp PKGBUILD "$WORK/"
-cp "wpt-$VERSION.tar.gz" "$WORK/"
-mkdir -p "$WORK/src"
-cp "wpt-$VERSION.tar.gz" "$WORK/$PKGNAME-$VERSION.tar.gz" 2>/dev/null || true
+# makepkg looks for the source under the name PKGBUILD declares; give it the local build of it
 cp "wpt-$VERSION.tar.gz" "$WORK/wine-plugin-toolkit-$VERSION.tar.gz"
 cd "$WORK"
+OLDPWD="$ROOT"
 makepkg -f --skipchecksums "$@"
-ls -1 wine-plugin-toolkit-*.pkg.tar.zst
+
+# keep every build: ~/wpt-pkg is the archive of record (0.1.0 onwards, never tidied)
+ARCHIVE="${WPT_ARCHIVE_DIR:-$HOME/wpt-pkg}"
+mkdir -p "$ARCHIVE"
+cp -v wine-plugin-toolkit-*-any.pkg.tar.zst "$ARCHIVE/"
+cp -v "$OLDPWD/dist/wpt-$VERSION.tar.gz" "$ARCHIVE/" 2>/dev/null || true
+ls -1 "$ARCHIVE" | tail -4

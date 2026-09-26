@@ -87,6 +87,15 @@ def _installed_versions(env: Environment) -> dict[str, str]:
     return versions
 
 
+def _readable(path: Path) -> bool:
+    """Whether a listed file can still be measured - downloads and temp files come and go."""
+    try:
+        path.stat()
+        return True
+    except OSError:
+        return False
+
+
 def discover(env: Environment, extra_dirs: list[Path] | None = None) -> list[Installer]:
     """Find installers in Downloads, the prefix root, and any extra directories."""
     search_dirs: list[Path] = [Path.home() / "Downloads", env.drive_c]
@@ -125,7 +134,7 @@ def discover(env: Environment, extra_dirs: list[Path] | None = None) -> list[Ins
                     product=product,
                     version=version,
                     kind="msi" if path.suffix.lower() == ".msi" else "wrapper",
-                    size=path.stat().st_size,
+                    size=path.stat().st_size if _readable(path) else 0,
                     installed=installed,
                 )
             )

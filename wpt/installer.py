@@ -112,7 +112,7 @@ def places_a_plugin(plan: Plan) -> bool:
 
     A plan that places files but no plugin payload is a driver or an application package. Saying
     so is the whole point: Neural DSP's Nano Cortex download is a USB driver (.sys/.inf/.cat) plus
-    a control panel, and "0 destinations, install complete" told him nothing (2026-09-26).
+    a control panel, and "0 destinations, install complete" said nothing about why.
     """
     return any(action.label.split(" ")[0] in PLUGIN_KEYS for action in plan.actions)
 
@@ -298,9 +298,27 @@ def filter_needing_repair(plan: Plan) -> Plan:
         if not destination.exists():
             repaired.actions.append(action)
             continue
-        if expected_size and destination.is_file() and destination.stat().st_size != expected_size:
+        if not expected_size:
+            continue
+        if destination.is_file():
+            if _safe_size(destination) != expected_size:
+                repaired.actions.append(action)
+            continue
+        # A directory destination is a bundle (.vst3/.aaxplugin): its own mtime says nothing, so the
+        # size has to be measured the same way verification measures it. Skipping these meant a broken
+        # bundle was reported as intact while verify_plan flagged it — the filter and the verifier
+        # have to agree, so both go through _measured_size.
+        if _measured_size(destination, destination.name) != expected_size:
             repaired.actions.append(action)
     return repaired
+
+
+def _safe_size(path: Path) -> int | None:
+    """Size of a file, or None if it cannot be read (it may have vanished since we listed it)."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
 
 
 def uninstall(env: Environment, product_code: str, dry_run: bool = False) -> tuple[int, str]:
@@ -321,9 +339,16 @@ def uninstall(env: Environment, product_code: str, dry_run: bool = False) -> tup
     ]
     if dry_run:
         return 0, "would run: " + " ".join(command)
-    proc = subprocess.run(
-        command, env=env.wine_env(), capture_output=True, text=True, timeout=600
-    )
+    try:
+        proc = subprocess.run(
+            command, env=env.wine_env(), capture_output=True, text=True, timeout=600
+        )
+    except subprocess.TimeoutExpired:
+        # a stuck wineserver is common on a prefix in a bad state; say so rather than raising,
+        # because the caller has to tell the user how far the uninstall got (usually nowhere)
+        return 124, f"{env.wine_binary.name} msiexec /x did not finish within 600s - nothing was removed"
+    except OSError as exc:
+        return 125, f"could not run wine: {exc}"
     detail = (proc.stdout or "").strip() or (proc.stderr or "").strip()
     return proc.returncode, detail
 
@@ -441,10 +466,16 @@ def stale_registry_edits(env: Environment, plan: Plan, product_code: str | None 
     """
     placed = {action.dest for action in plan.actions}
     filenames = {name.lower() for name in plan.expected}
+    # The directories this product owns (the destination itself for a file, the destination for a
+    # bundle). A registry value pointing *somewhere else* must not be deleted just because the file
+    # at the end of it happens to share a basename with one of this MSI's files - shared helpers,
+    # `setup.exe` and common plugin DLL names recur across products, and a purge is irreversible.
+    owned_dirs = {(a.dest if a.dest.is_dir() else a.dest.parent) for a in plan.actions} | placed
     code = (product_code or "").strip("{}").upper()
     product_name = (plan.identity.product_name or "").lower()
     edits: list[RegistryEdit] = []
     seen: set[tuple[str, str, str | None]] = set()
+    unsure: set[str] = set()
 
     for reg_name, hive in (("system.reg", "HKLM"), ("user.reg", "HKCU")):
         reg = env.prefix / reg_name
@@ -464,8 +495,13 @@ def stale_registry_edits(env: Environment, plan: Plan, product_code: str | None 
                 path = products_mod.to_path(env.drive_c, data)
                 if path is None:
                     continue
-                if path in placed or (path.parent in placed) or (path.name.lower() in filenames):
+                under_ours = any(directory in path.parents for directory in owned_dirs if directory)
+                if path in placed or (path.parent in placed) or (under_ours and path.name.lower() in filenames):
                     reason = f"points at {path.name}, which this MSI placed"
+                elif path.name.lower() in filenames and not under_ours:
+                    # same filename, different place: likely another product's copy of a shared
+                    # file. Reported, never edited.
+                    unsure.add(path.name)
                 elif not path.exists() and product_name and product_name in str(path).lower():
                     # e.g. the vendor's 'user presets live here' record, after that
                     # directory has been removed: a pointer to nothing, named after
@@ -478,6 +514,12 @@ def stale_registry_edits(env: Environment, plan: Plan, product_code: str | None 
                     continue
                 seen.add(marker)
                 edits.append(RegistryEdit(hive, key, name, reason))
+
+    for name in sorted(unsure):
+        plan.warnings.append(
+            f"a registry value points at a file named {name} outside this product's own folders - "
+            "left alone (it may belong to another product that ships the same file name)"
+        )
     return edits
 
 
@@ -493,7 +535,12 @@ def purge_registry(
         if dry_run:
             rows.append(("dry-run", edit.target, edit.reason))
             continue
-        proc = subprocess.run(command, env=env.wine_env(), capture_output=True, text=True, timeout=300)
+        try:
+            proc = subprocess.run(command, env=env.wine_env(), capture_output=True, text=True,
+                                  timeout=300)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            rows.append(("failed", edit.target, f"{type(exc).__name__}: nothing was changed"))
+            continue
         if proc.returncode == 0:
             rows.append(("purged", edit.target, edit.reason))
         else:
@@ -528,7 +575,16 @@ def set_enabled(
                 path.name[: -len(DISABLED_SUFFIX)] if enabled else path.name + DISABLED_SUFFIX
             )
             if dry_run:
-                rows.append(("dry-run", str(path), f"-> {target.name}"))
+                note = f"-> {target.name}"
+                if target.exists():
+                    note += "  (refused: that name is already taken)"
+                rows.append(("dry-run", str(path), note))
+                continue
+            # Path.rename() on POSIX replaces an existing destination without a word. Both the real
+            # file and its .disabled twin existing means renaming would destroy one of them, and a
+            # plugin file is not something to lose silently.
+            if target.exists():
+                rows.append(("kept", str(path), f"{target.name} already exists - nothing renamed"))
                 continue
             try:
                 path.rename(target)

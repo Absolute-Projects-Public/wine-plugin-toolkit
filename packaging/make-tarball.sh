@@ -15,9 +15,9 @@ mkdir -p dist
 tar --exclude='__pycache__' --exclude='*.pyc' --exclude='dist' --exclude='screenshots' \
     --exclude='presets-exported-*' --exclude='presets-rescued-*' --exclude='wrapper-corpus-*' \
     --sort=name --owner=0 --group=0 --mtime='@0' \
-    --transform "s,^\.,wpt-$VERSION," \
+    --transform "s,^\.,wine-plugin-toolkit-$VERSION," \
     -czf "dist/$NAME" ./wpt ./tests ./packaging ./README.md ./TESTING.md ./CHANGELOG.md \
-        ./LICENSE ./pyproject.toml ./PKGBUILD
+        ./LICENSE ./pyproject.toml ./PKGBUILD ./docs
 
 echo "wrote dist/$NAME ($(stat -c %s "dist/$NAME") bytes)"
 

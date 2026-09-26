@@ -228,7 +228,12 @@ def export(env: Environment, destination: Path, vendor: str = "Neural DSP") -> l
             if target.exists():
                 rows.append(("kept", str(source), "already exported"))
                 continue
-            target_root.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            try:
+                target_root.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            except OSError as exc:
+                # one unwritable file (permissions, a full disk) must not abandon the whole export
+                rows.append(("failed", str(source), str(exc)))
+                continue
             rows.append(("exported", str(source), f"-> {target}"))
     return rows

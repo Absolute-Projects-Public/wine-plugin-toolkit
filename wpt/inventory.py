@@ -157,7 +157,10 @@ def build(env: Environment, include_standalone: bool = True) -> Inventory:
             if kind == "other":
                 continue
             seen.add(path)
-            stat = path.stat()
+            try:
+                stat = path.stat()
+            except OSError:
+                continue          # it vanished between the listing and the stat
             expected = index.get(base.lower())
             inv.entries.append(
                 PluginEntry(

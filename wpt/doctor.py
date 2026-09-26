@@ -174,7 +174,7 @@ def check_inventory(report: Report, env: Environment) -> None:
         from . import inventory as inventory_mod
 
         inv = inventory_mod.build(env)
-    except Exception as exc:  # noqa: BLE001 - a broken listing is exactly what he would report
+    except Exception as exc:  # noqa: BLE001 - a broken listing is exactly the kind of thing users report
         report.add("inventory", FAIL, f"could not list the prefix: {exc}")
         return
     if not inv.entries:

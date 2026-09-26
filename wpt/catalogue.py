@@ -24,6 +24,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+
+
+class CatalogueError(RuntimeError):
+    """Anything that stopped the catalogue being read, refreshed or downloaded."""
 from pathlib import Path
 
 DOWNLOADS_URL = "https://neuraldsp.com/downloads"
@@ -161,11 +165,17 @@ def load_snapshot(path: Path | None = None) -> Catalogue:
     path = Path(path) if path else SNAPSHOT
     if not path.is_file():
         return Catalogue(source="none")
-    payload = json.loads(path.read_text())
+    # A data file shipped inside the package is treated as fallible: it is parsed in the GUI's
+    # constructor, so a truncated or future-format snapshot would stop the window opening at all.
+    try:
+        payload = json.loads(path.read_text())
+        releases = [Release(**item) for item in payload.get("releases", [])]
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        return Catalogue(source=f"unreadable ({exc})")
     return Catalogue(
         fetched=payload.get("fetched", ""),
         source=payload.get("source", str(path)),
-        releases=[Release(**item) for item in payload.get("releases", [])],
+        releases=releases,
     )
 
 
@@ -227,11 +237,16 @@ def download(url: str, destination: Path, log=None) -> Path:
     target = destination / name
     say(f"downloading {name} ...")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as handle:  # noqa: S310
-        total = 0
-        while chunk := response.read(1024 * 256):
-            handle.write(chunk)
-            total += len(chunk)
+    total = 0
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as handle:  # noqa: S310
+            while chunk := response.read(1024 * 256):
+                handle.write(chunk)
+                total += len(chunk)
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        # never leave half a file behind that looks like a finished download
+        target.unlink(missing_ok=True) if total == 0 else target.rename(target.with_suffix(target.suffix + ".partial"))
+        raise CatalogueError(f"could not download {name}: {exc}") from exc
     say(f"saved {target} ({total / 1e6:.1f} MB)")
     return target
 

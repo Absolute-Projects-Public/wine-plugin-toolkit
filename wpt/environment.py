@@ -121,7 +121,13 @@ class Environment:
         return env
 
     def describe(self) -> dict[str, str]:
+        import platform
+
+        from . import __version__
+
         return {
+            "wpt": __version__,
+            "python": platform.python_version(),
             "home": str(self.home),
             "wine_tree": str(self.wine_tree),
             "prefix": str(self.prefix),

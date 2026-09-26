@@ -11,7 +11,7 @@ welcome — `wpt doctor` (below) prints most of what is needed for one.
 Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
 refuses to run — and prove afterwards that it actually worked.
 
-Born from a real case: an Archetype Rabea X 1.1.0 upgrade where the vendor wrapper hung at *"Starting
+Born from a real case: an Archetype plugin upgrade where the vendor wrapper hung at *"Starting
 install"* with an empty progress bar, `msiexec` failed with **1603**, then **103**, and the prefix ended up
 claiming the product was installed while not a single plugin file existed on disk.
 
@@ -36,7 +36,7 @@ directly, then checks every file against the MSI's own `File` table — byte siz
 - `msitools` — `sudo pacman -S msitools` (Arch/CachyOS) · `sudo apt install msitools` (Debian/Ubuntu)
 - A Wine prefix of the ableton-linux shape (`~/.wine-ableton` + a staged
   `~/.local/opt/wine-d2d1-nspa-<version>` tree), or pass `--prefix` / `--tree`
-- `python-pyside6` only for the GUI (`sudo pacman -S pyside6`)
+- `pyside6` only for the GUI (`sudo pacman -S pyside6`)
 
 ## Command line
 
@@ -282,7 +282,7 @@ Exit codes: `0` ok · `1` verification or scan found problems · `2` bad input �
 python3 -m wpt.gui
 ```
 
-Five tabs, all thin wrappers over the same core functions as the CLI:
+Six tabs, all thin wrappers over the same core functions as the CLI:
 
 - **Environment** — detected tree, prefix, Windows user, plugin directories; warns if msitools is missing
 - **Plugins** — the inventory: kind, size, and an integrity verdict against the cached MSI (`ok` /
@@ -305,24 +305,22 @@ Five tabs, all thin wrappers over the same core functions as the CLI:
 Long operations run on a worker thread, so the window never freezes mid-extract. A plugin that is
 *disabled* stays visible here (flagged `disabled`), so it can always be brought back.
 
-![Plugins tab](docs/plugins.png)
-
 ## Installing it
 
 Arch/CachyOS — build once, install as `wpt`:
 
 ```bash
-bash packaging/make-tarball.sh --build   # writes wine-plugin-toolkit-<ver>-1-any.pkg.tar.zst
+bash packaging/build-local.sh     # needs base-devel, for makepkg   # writes wine-plugin-toolkit-<ver>-1-any.pkg.tar.zst
 sudo pacman -U wine-plugin-toolkit-*.pkg.tar.zst
 wpt env          # CLI
-wpt-gui          # GUI (needs python-pyside6)
+wpt-gui          # GUI (needs pyside6)
 ```
 
 Anything else, from the source directory:
 
 ```bash
-pip install .            # console script `wpt`
-pip install '.[gui]'     # adds `wpt-gui`
+python3 -m venv .venv && .venv/bin/pip install .            # console script `wpt`
+python3 -m venv .venv && .venv/bin/pip install '.[gui]'     # adds `wpt-gui`
 ```
 
 ## Tests
@@ -385,7 +383,7 @@ in a core module.
 - `scan`'s "plugins present" list can include a plugin's **support dlls** (Qt's `qwindows.dll` and
   friends live in plugin directories and are legitimate entries). They are not noise to be filtered
   blindly, just more than the four paths you may be looking for.
-- macOS/Windows and non-ableton-linux prefixes are explicitly out of scope for v0.1.
+- macOS/Windows and non-ableton-linux prefixes are explicitly out of scope.
 - **`uninstall` reads the MSI before it runs anything.** `msiexec /x` deletes Windows Installer's cached
   copy of the package, and on this stack that cache is often the only copy a product has (anything installed
   by running its vendor wrapper never writes one into its own folder), so the ProductCode, the File table and

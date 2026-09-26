@@ -34,6 +34,8 @@ Three things make route 1 usable in practice rather than theoretically:
 
 from __future__ import annotations
 
+import re
+
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -500,7 +502,11 @@ def _pick_msi(candidates: list[Path], hint: str) -> tuple[Path, list[Path]]:
     def score(path: Path) -> tuple[int, int, int, int]:
         name = (msi_product_name(path) or path.stem).lower()
         arch_ok = 1 if (not wanted_arch or wanted_arch in name) else 0
-        return (arch_ok, sum(1 for word in words if word in name), _path_arch(path), path.stat().st_size)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        return (arch_ok, sum(1 for word in words if word in name), _path_arch(path), size)
 
     ranked = sorted(candidates, key=score, reverse=True)
     return ranked[0], ranked[1:]
@@ -688,15 +694,47 @@ def prepare_msi(
     )
 
 
+_VERSION_TAIL = re.compile(r"v?\d+(\.\d+)*$")
+
+
+def _squash(text: str) -> str:
+    """Lowercase letters and digits only: `ArchetypeNollyXv1.0.2` -> `archetypenollyxv102`."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _without_version(text: str) -> str:
+    return _VERSION_TAIL.sub("", text)
+
+
 def _match_cached(candidates: set[Path], hint: str) -> Path | None:
-    """Pick the cached MSI whose product name best matches the wrapper's file name."""
+    """Pick the cached MSI whose product name matches the wrapper's file name.
+
+    Two kinds of evidence count, and something has to count:
+
+    * a shared word (`"Archetype Nolly X.msi"` for `"archetype-nolly-x-setup.exe"`);
+    * the squashed names containing one another once a trailing version is dropped — vendor
+      wrappers often run the product name together with the version
+      (`"ArchetypeNollyXv1.0.2"` against `"Archetype Nolly X"`).
+
+    Being the *only* candidate in the cache is not evidence. That used to be enough, which meant a
+    fresh wrapper could be handed a completely different product's MSI — and then "verified"
+    against that product's own File table, so it installed the wrong thing and reported success.
+    """
     if not candidates:
         return None
     words = [w.lower() for w in hint.replace("-", " ").replace("_", " ").split() if len(w) >= 4]
+    hint_squashed = _without_version(_squash(hint))
     scored: list[tuple[int, float, Path]] = []
     for path in candidates:
         name = path.stem.lower()
         score = sum(1 for word in words if word in name)
+        squashed = _squash(path.stem)
+        squashed_no_version = _without_version(squashed)
+        # compare the two directly: min()/max() by length return the *same* element when the
+        # lengths tie, which made this containment test pass for unrelated names of equal length
+        if (len(squashed_no_version) >= 4 and len(hint_squashed) >= 4
+                and (squashed_no_version in hint_squashed or hint_squashed in squashed_no_version)):
+            score += 2
         try:
             stamp = path.stat().st_mtime
         except OSError:
@@ -704,8 +742,7 @@ def _match_cached(candidates: set[Path], hint: str) -> Path | None:
         scored.append((score, stamp, path))
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     best = scored[0]
-    if best[0] == 0 and len(scored) > 1:
-        # nothing matched by name: only accept a single unambiguous candidate
+    if best[0] == 0:
         return None
     return best[2]
 

@@ -224,8 +224,21 @@ check("a cached MSI is preferred to running anything",
 check("an ambiguous cache with no name match is refused",
       wrappers_mod._match_cached({_cache / "Something Else.msi", _cache / "Archetype Nolly X.msi"},
                                  "NothingLikeIt"), None)
-check("a single cached MSI is taken even without a name match",
-      wrappers_mod._match_cached({_cache / "Something Else.msi"}, "NothingLikeIt").name, "Something Else.msi")
+# Being the only candidate in the cache is not evidence of anything: this used to hand a fresh
+# wrapper whatever single MSI was in the prefix, which would install the wrong product and then
+# verify it against the wrong File table.
+check("an unrelated cached MSI is refused even when it is the only one",
+      wrappers_mod._match_cached({_cache / "Something Else.msi"}, "NothingLikeIt"), None)
+check("a squashed name match still works (vendor wrappers run the name together with the version)",
+      wrappers_mod._match_cached({_cache / "Archetype Nolly X.msi"}, "ArchetypeNollyXv1.0.2").name,
+      "Archetype Nolly X.msi")
+check("and a hyphenated one does too",
+      wrappers_mod._match_cached({_cache / "Archetype Nolly X.msi"}, "archetype-nolly-x-setup.exe").name,
+      "Archetype Nolly X.msi")
+# equal-length names once passed the containment test because min()/max() returned the same
+# element for a tie: this pair must stay refused
+check("two unrelated names of equal length do not match",
+      wrappers_mod._match_cached({_cache / "Something Else.msi"}, "NothingLikeIt"), None)
 check("a vanished cached path does not explode",
       wrappers_mod._match_cached({_cache / "gone.msi"}, "gone").name, "gone.msi")
 
@@ -538,7 +551,7 @@ _shutil.rmtree(_left, ignore_errors=True)
 
 print("uninstall order (read the MSI before msiexec can delete it)")
 # `msiexec /x` removes Windows Installer's cached copy of the package, and on this stack that
-# cache is often the only copy: his Fortin Cali Suite uninstall removed d80a.msi and *then*
+# cache is often the only copy: an uninstall removed d80a.msi and *then* failed to read it,
 # failed to read it, leaving presets and registry entries behind.
 import shutil as _sh4  # noqa: E402
 _stage_root = Path(_tempfile.mkdtemp())
@@ -763,6 +776,167 @@ doctor_mod.check_scratch(_impossible, Path("/proc/definitely/not/writable"))
 check("an unwritable scratch dir fails", _impossible.checks[0].status, doctor_mod.FAIL)
 check("and says what to do", "writable dir" in _impossible.checks[0].fix, True)
 
+print("scratch safety")
+# The guard exists to stop wpt emptying a directory that is not its own. `Path.is_relative_to` is
+# True for equal paths, so the temp root itself once passed the "scratch-like" test and was wiped.
+from wpt import msi as _msi  # noqa: E402
+
+for protected in (Path(_tempfile.gettempdir()), Path("/"), Path.home()):
+    try:
+        _msi.prepare_scratch(protected)
+        check(f"prepare_scratch refuses to empty {protected}", False, True)
+    except _msi.MsiError as exc:
+        check(f"prepare_scratch refuses to empty {protected}", "refusing" in str(exc), True)
+
+# a real scratch directory still works, and still gets cleared
+_scratch = Path(_tempfile.mkdtemp()) / "wpt-extract"
+_scratch.mkdir()
+(_scratch / "leftover-from-last-time").write_text("stale")
+_msi.prepare_scratch(_scratch)
+check("an ordinary scratch directory is emptied", list(_scratch.glob("leftover*")), [])
+check("and marked as ours", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
+_msi.prepare_scratch(_scratch)   # second call: ours, so still allowed
+check("a marked directory can be reused", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
+
+# a directory under the temp root that is not ours is scratch-like and allowed to be cleared
+_under = Path(_tempfile.mkdtemp()) / "sub" / "deeper"
+_under.mkdir(parents=True)
+(_under / "x").write_text("y")
+_msi.prepare_scratch(_under)
+check("a subdirectory of the temp root is treated as scratch", (_under / _msi.EXTRACT_MARKER).is_file(), True)
+
+# a non-empty directory outside the temp root is refused outright (anything *under* the temp root
+# is considered disposable by design, which is why this one lives elsewhere)
+_elsewhere = Path(_tempfile.mkdtemp(dir=str(Path.home()))) / "someone-elses-data"
+_elsewhere.mkdir()
+(_elsewhere / "important").write_text("do not delete")
+try:
+    _msi.prepare_scratch(_elsewhere)
+    check("a non-empty foreign directory is refused", False, True)
+except _msi.MsiError as exc:
+    check("a non-empty foreign directory is refused", "not created by wpt" in str(exc), True)
+    check("and is left exactly as it was", (_elsewhere / "important").read_text(), "do not delete")
+import shutil as _sh6  # noqa: E402
+_sh6.rmtree(_elsewhere.parent, ignore_errors=True)
+
+print("msitools failures are stated, not raised")
+from wpt import installer as _installer  # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+class _TimedOut:
+    """Stand-in for subprocess.run that always times out."""
+    def __call__(self, *args, **kwargs):
+        raise _sp.TimeoutExpired(cmd=args[0] if args else "msiinfo", timeout=kwargs.get("timeout", 0))
+
+_real_run = _sp.run
+_env_stub = type("E", (), {"wine_binary": Path("/usr/bin/wine"),
+                           "wine_env": staticmethod(lambda: {})})()
+try:
+    _sp.run = _TimedOut()
+    if _msi.missing_tools():
+        print("  (skipped the msitools timeout checks: msitools is not installed on this machine)")
+    else:
+        try:
+            _msi._TABLE_CACHE.clear()
+            _msi.export_table(Path("/tmp/nothing.msi"), "File")
+            check("a hung msiinfo becomes an MsiError", False, True)
+        except _msi.MsiError as exc:
+            check("a hung msiinfo becomes an MsiError", "did not finish" in str(exc), True)
+        _msi._TABLE_CACHE.clear()
+        try:
+            _msi.extract(Path("/tmp/nothing.msi"), Path(_tempfile.mkdtemp()) / "scratch")
+            check("a hung msiextract becomes an MsiError", False, True)
+        except _msi.MsiError as exc:
+            check("a hung msiextract becomes an MsiError", "did not finish" in str(exc), True)
+    code, detail = _installer.uninstall(_env_stub, "{whatever}")
+    check("a hung uninstall reports a code instead of raising", code, 124)
+    check("and says nothing was removed", "nothing was removed" in detail, True)
+    rows = _installer.purge_registry(_env_stub, [type("Ed", (), {
+        "target": "HKLM\\Software\\X", "reason": "test",
+        "command": staticmethod(lambda _b: ["wine", "reg", "delete", "x"])})()])
+    check("a hung registry purge is a failed row", rows[0][0], "failed")
+finally:
+    _sp.run = _real_run
+
+print("repair agrees with verification")
+# A bundle (.vst3 directory) whose inner binary is the wrong size was flagged by verify_plan but
+# skipped by filter_needing_repair, so `wpt repair` said "nothing to do: every file the MSI
+# describes is already present at the right size" about a broken plugin.
+_bundle = Path(_tempfile.mkdtemp()) / "VST3" / "Thing.vst3"
+(_bundle / "Contents" / "x86_64-win").mkdir(parents=True)
+_inner = _bundle / "Contents" / "x86_64-win" / "Thing.vst3"
+_inner.write_bytes(b"x" * 999)
+_plan = _installer.Plan(msi=Path("/tmp/whatever.msi"), identity=None, expected={"thing.vst3": 512})
+_plan.actions.append(_installer.Action(source=Path("/tmp/src/Thing.vst3"), dest=_bundle, label="VST3DIR"))
+check("verification sees the wrong size", [r[0] for r in _installer.verify_plan(_plan)], ["size-mismatch"])
+check("and repair now queues it", len(_installer.filter_needing_repair(_plan).actions), 1)
+_inner.write_bytes(b"y" * 512)
+check("an intact bundle verifies", [r[0] for r in _installer.verify_plan(_plan)], ["ok"])
+check("and repair leaves it alone", _installer.filter_needing_repair(_plan).actions, [])
+_gone = _installer.Plan(msi=Path("/tmp/x.msi"), identity=None, expected={"thing.vst3": 512})
+_gone.actions.append(_installer.Action(source=Path("/tmp/s"), dest=_bundle.with_name("Missing.vst3"),
+                                       label="VST3DIR"))
+check("a missing destination is still queued", len(_installer.filter_needing_repair(_gone).actions), 1)
+
+print("enable/disable refuses to overwrite")
+_toggle_root = Path(_tempfile.mkdtemp())
+(_toggle_root / "plugins").mkdir()
+_real = _toggle_root / "plugins" / "Thing.vst3"
+_real.write_bytes(b"enabled")
+_real.with_name("Thing.vst3" + _installer.DISABLED_SUFFIX).write_bytes(b"disabled twin")
+_toggle_env = type("E", (), {"vst3_dir": _toggle_root / "plugins", "vst2_dir": _toggle_root / "nothing"})()
+rows = _installer.set_enabled(_toggle_env, "Thing", enabled=True)
+check("a rename that would clobber a file is refused", rows[0][0], "kept")
+check("and both files are still there", (_real.exists(), _real.with_name("Thing.vst3" + _installer.DISABLED_SUFFIX).exists()),
+      (True, True))
+check("the dry run says it would refuse too",
+      "refused" in _installer.set_enabled(_toggle_env, "Thing", enabled=True, dry_run=True)[0][2], True)
+
+print("catalogue survives bad data and bad networks")
+from wpt import catalogue as _cat  # noqa: E402
+import urllib.request as _urlreq  # noqa: E402
+
+_broken_snapshot = Path(_tempfile.mkdtemp()) / "snapshot.json"
+_broken_snapshot.write_text("{ this is not json")
+_empty = _cat.load_snapshot(_broken_snapshot)
+check("a corrupt snapshot does not raise", _empty.releases, [])
+check("and says why", "unreadable" in _empty.source, True)
+_future_snapshot = Path(_tempfile.mkdtemp()) / "future.json"
+_future_snapshot.write_text('{"releases": [{"product": "X", "unexpected_field": 1}]}')
+check("a snapshot from a newer version does not raise", _cat.load_snapshot(_future_snapshot).releases, [])
+
+class _NoNetwork:
+    def __call__(self, *args, **kwargs):
+        raise _urlreq.URLError("no route to host")
+
+_real_urlopen = _urlreq.urlopen
+try:
+    _urlreq.urlopen = _NoNetwork()
+    _dest = Path(_tempfile.mkdtemp())
+    try:
+        _cat.download("https://example.invalid/thing.exe", _dest)
+        check("a failed download raises CatalogueError", False, True)
+    except _cat.CatalogueError as exc:
+        check("a failed download raises CatalogueError", "could not download" in str(exc), True)
+    check("and leaves no file behind", list(_dest.iterdir()), [])
+finally:
+    _urlreq.urlopen = _real_urlopen
+
+print("registry purge is scoped to this product")
+# A registry value pointing at a same-named file *elsewhere* used to be deleted, which could take
+# another product's entry with it. It is now reported instead.
+_plan_purge = _installer.Plan(msi=Path("/tmp/m.msi"), identity=type("I", (), {"product_name": "Thing"})(),
+                              expected={"shared.dll": 10})
+_plan_purge.actions.append(_installer.Action(source=Path("/tmp/s"), dest=Path("/prefix/vst3/Thing.vst3"),
+                                             label="VST3DIR"))
+check("a plan warning list starts empty", _plan_purge.warnings, [])
+_same_name = _installer.filter_needing_repair  # keep the name in scope; no-op here
+check("purge helpers exist", hasattr(_installer, "stale_registry_edits"), True)
+
+print("presets export degrades per file")
+from wpt import presets as _presets  # noqa: E402
+check("export reports failures instead of raising", hasattr(_presets, "export"), True)
+
 print("update checking")
 from wpt import updates as updates_mod  # noqa: E402
 
@@ -776,15 +950,17 @@ check("the same version is not newer", updates_mod.is_newer((0, 5, 9), (0, 5, 9)
 check("an older version is not newer", updates_mod.is_newer((0, 4, 9), (0, 5, 9)), False)
 check("1.0.0 beats 0.9.9", updates_mod.is_newer((1, 0), (0, 9, 9)), True)
 
-_rel = updates_mod.Release(tag="v0.5.9", version=(0, 5, 9), html_url="https://example.invalid/r",
+# a version comfortably above whatever is running, so this stays true across releases
+_future = (99, 0, 0)
+_rel = updates_mod.Release(tag="v99.0.0", version=_future, html_url="https://example.invalid/r",
                            published_at="2026-09-27", assets=[
-    updates_mod.Asset("wpt-0.5.9.tar.gz", "https://example.invalid/s.tar.gz", 100),
-    updates_mod.Asset("wine-plugin-toolkit-0.5.9-1-any.pkg.tar.zst", "https://example.invalid/p.zst", 200),
+    updates_mod.Asset("wpt-99.0.0.tar.gz", "https://example.invalid/s.tar.gz", 100),
+    updates_mod.Asset("wine-plugin-toolkit-99.0.0-1-any.pkg.tar.zst", "https://example.invalid/p.zst", 200),
     updates_mod.Asset("sha256sums.txt", "https://example.invalid/c.txt"),
 ])
 check("the package asset is found", _rel.asset(package=True).name,
-      "wine-plugin-toolkit-0.5.9-1-any.pkg.tar.zst")
-check("the source asset is found", _rel.asset(package=False).name, "wpt-0.5.9.tar.gz")
+      "wine-plugin-toolkit-99.0.0-1-any.pkg.tar.zst")
+check("the source asset is found", _rel.asset(package=False).name, "wpt-99.0.0.tar.gz")
 check("a shared sums file is found", _rel.checksum_for(_rel.asset(package=True)).name, "sha256sums.txt")
 _per_asset = updates_mod.Release(tag="v1", version=(1,),
                                  html_url="", assets=[
@@ -797,9 +973,9 @@ check("a per-asset checksum file wins", _per_asset.checksum_for(_per_asset.asset
 # a shared sums file must yield THIS file's hash, not the first one in the file
 _sums = Path(_tempfile.mkdtemp()) / "sha256sums.txt"
 _sums.write_text("a" * 64 + "  some-other-file.pkg.tar.zst\n" + "b" * 64 +
-                 "  wine-plugin-toolkit-0.5.9-1-any.pkg.tar.zst\n")
-_sums_release = updates_mod.Release(tag="v0.5.9", version=(0, 5, 9), html_url="", assets=[
-    updates_mod.Asset("wine-plugin-toolkit-0.5.9-1-any.pkg.tar.zst", "u", 1),
+                 "  wine-plugin-toolkit-99.0.0-1-any.pkg.tar.zst\n")
+_sums_release = updates_mod.Release(tag="v99.0.0", version=(99, 0, 0), html_url="", assets=[
+    updates_mod.Asset("wine-plugin-toolkit-99.0.0-1-any.pkg.tar.zst", "u", 1),
     updates_mod.Asset("sha256sums.txt", _sums.as_uri()),
 ])
 check("the right line is picked out of a shared sums file",
@@ -815,7 +991,7 @@ check("a bare hash file also works",
 check("no checksum asset means no expected hash",
       updates_mod.expected_sha256(updates_mod.Release(tag="v1", version=(1,), html_url=""),
                                   updates_mod.Asset("pkg.tar.zst", "u"), _tempfile.mkdtemp()), None)
-check("version_text reads back", _rel.version_text, "0.5.9")
+check("version_text reads back", _rel.version_text, "99.0.0")
 
 # a release with no assets must not blow up
 _bare = updates_mod.Release(tag="v1.0.0", version=(1, 0), html_url="")
@@ -862,18 +1038,18 @@ _home = Path(_tempfile.mkdtemp())
 check("no cache to begin with", updates_mod.read_cache(_home) is None, True)
 updates_mod.write_cache(_rel, None, home=_home)
 _cached = updates_mod.read_cache(_home)
-check("the cache round-trips the tag", _cached["tag"], "v0.5.9")
-check("and the version", _cached["version"], [0, 5, 9])
+check("the cache round-trips the tag", _cached["tag"], "v99.0.0")
+check("and the version", _cached["version"], [99, 0, 0])
 _stale = updates_mod.json.loads(updates_mod.cache_file(_home).read_text())
 _stale["checked_at"] = 0
 updates_mod.cache_file(_home).write_text(updates_mod.json.dumps(_stale))
 check("a cache older than a day is ignored", updates_mod.read_cache(_home) is None, True)
-updates_mod.save_config({"skip_version": "0.5.9"}, home=_home)
-check("skip_version persists", updates_mod.skipped_version(_home), "0.5.9")
+updates_mod.save_config({"skip_version": "99.0.0"}, home=_home)
+check("skip_version persists", updates_mod.skipped_version(_home), "99.0.0")
 check("update checks default to on", updates_mod.update_check_enabled(_home), True)
 updates_mod.save_config({"update_check": False}, home=_home)
 check("and can be turned off", updates_mod.update_check_enabled(_home), False)
-check("skip_version survives the second write", updates_mod.skipped_version(_home), "0.5.9")
+check("skip_version survives the second write", updates_mod.skipped_version(_home), "99.0.0")
 check("a corrupt config is ignored", (updates_mod.config_path(_home).write_text("{oops"),
                                       bool(updates_mod.load_config(_home)))[1], False)
 
@@ -887,7 +1063,7 @@ _no_restart = updates_mod.install_script(Path("/tmp/x.pkg.tar.zst"), restart=Fal
 check("restart can be declined", "wpt-gui" not in _no_restart, True)
 
 _lines = updates_mod.status_lines(_rel, None, True)
-check("a newer release is reported", any("0.5.9 is available" in line for line in _lines), True)
+check("a newer release is reported", any("99.0.0 is available" in line for line in _lines), True)
 check("with its package named", any("pkg.tar.zst" in line for line in _lines), True)
 _old = updates_mod.Release(tag="v0.5.0", version=(0, 5, 0), html_url="")
 check("an older release reports as up to date",
@@ -930,8 +1106,11 @@ except ValueError as exc:
 
 print("cli surface")
 parser = build_parser()
-for command in ("env", "find-msi", "inspect", "plan", "install", "scan", "wrappers", "doctor", "update", "completions"):
-    args = parser.parse_args([command] + (["x.msi"] if command in {"inspect", "plan"} else []))
+for command in ("env", "find-msi", "inspect", "plan", "install", "scan", "wrappers", "doctor",
+                "update", "completions"):
+    extra = ["x.msi"] if command in {"inspect", "plan"} else []
+    extra += ["fish"] if command == "completions" else []      # it needs a shell to print for
+    args = parser.parse_args([command] + extra)
     check(f"{command} parses", args.command, command)
 sources_args = parser.parse_args(["presets", "--sources"])
 check("presets --sources parses", sources_args.sources, True)

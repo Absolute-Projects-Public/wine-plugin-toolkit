@@ -348,7 +348,7 @@ def scan_plugin_files(prefix: Path) -> list[Path]:
             elif path.is_dir() and path.suffix.lower() in (".vst3", ".aaxplugin"):
                 found.append(path)
     # a bundle directory *and* the binary inside it were both being counted, so the triage
-    # total did not agree with `wpt list` (15 against 12 on his prefix, 2026-09-26): keep the
+    # total did not agree with `wpt list` (a bundle and the binary inside it were counted twice):
     # bundle, drop anything living inside one
     bundles = {path for path in found if path.is_dir()}
     found = [

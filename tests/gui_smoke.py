@@ -108,7 +108,7 @@ wait_for_worker(win)
 check("Pending tab: rows rendered",
       lambda: f"{win.pending_table.rowCount()} row(s) — {win.pending_summary.text()}")
 
-# enable/disable path, dry run only -- the smoke test must not touch his plugins
+# enable/disable path, dry run only -- the smoke test must not touch the user's plugins
 check("enable/disable wiring (dry run)",
       lambda: f"{len(gui.set_plugin_enabled(win.env, 'Nolly', enabled=False, dry_run=True))} match(es)")
 

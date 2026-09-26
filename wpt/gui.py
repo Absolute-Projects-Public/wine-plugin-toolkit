@@ -129,6 +129,8 @@ class MainWindow(QMainWindow):
         self._closing = False
         # update checking owns its own workers so an update never queues behind, or blocks,
         # the prefix jobs (and vice versa)
+        self._downloads_scan_running = False
+        self._downloads_before: dict[str, Path] | None = None
         self._update_worker: Worker | None = None
         self._update_busy = False
         self._update_release = None
@@ -353,11 +355,18 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(400, self.close)
 
     # ------------------------------------------------------------------ env
-    def _spawn(self, fn, *args, on_line=None, on_done=None, on_failed=None, log=None, label="job") -> bool:
+    def _restore_buttons(self, *buttons) -> None:
+        """Re-enable buttons a caller disabled before handing work to _spawn()."""
+        for button in buttons:
+            if button is not None:
+                button.setEnabled(True)
+
+    def _spawn(self, fn, *args, on_line=None, on_done=None, on_failed=None, log=None, label="job",
+               restore=None, restore_text=None) -> bool:
         """Run one job off the GUI thread — safely.
 
-        Two rules here, both learned from a real crash on his machine (2026-09-26: he
-        disabled a plugin, hit refresh, and the window died):
+        Two rules here, both learned from a real crash in the field — a user disabled a
+        plugin, hit refresh, and the window died:
 
         - **a running QThread must keep a Python reference.** The old code did
           `self.worker = Worker(...)`, so starting a second job dropped the last reference
@@ -370,6 +379,12 @@ class MainWindow(QMainWindow):
         """
         busy = [w for w in self._workers if w.isRunning()]
         if busy:
+            # The caller usually disabled its button before calling us. Declining without undoing
+            # that leaves a dead button and a status line describing work that never started.
+            if restore:
+                self._restore_buttons(*restore)
+            if restore_text:
+                restore_text()
             message = f"{label}: still working on the previous one — try again in a moment"
             if log is not None:
                 if callable(log):
@@ -421,7 +436,10 @@ class MainWindow(QMainWindow):
         """
         import time as _time
 
-        deadline = _time.time() + 30
+        # A vendor installer under Wine is allowed 2400 s, so a short cap here would tear the
+        # process down with a live QThread - which Qt answers with SIGABRT and no traceback.
+        # Wait as long as the longest job can legitimately take.
+        deadline = _time.time() + 2500
         while (self._jobs_running() or self._update_job_running()) and _time.time() < deadline:
             QApplication.processEvents()
             _time.sleep(0.05)
@@ -430,8 +448,8 @@ class MainWindow(QMainWindow):
         """Never let the window close out from under a running job.
 
         A QThread that is still running when its last reference goes away makes Qt abort
-        the process (SIGABRT, no exception, no traceback) — which is how this started: he
-        disabled a plugin, refreshed, and the window vanished. The window now stays alive
+        the process (SIGABRT, no exception, no traceback) — which is how this started: a
+        plugin was disabled, the window was refreshed, and it vanished. The window now stays alive
         (hidden) until the job finishes, then closes itself.
         """
         if not self._jobs_running():
@@ -558,6 +576,7 @@ class MainWindow(QMainWindow):
         if not self.env:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
+        previous_summary = self.plugin_summary.text()
         self.plugin_summary.setText("Reading the prefix…")
         self._spawn(
             lambda emit: inventory_mod.build(self.env),
@@ -565,6 +584,7 @@ class MainWindow(QMainWindow):
             on_failed=lambda msg: self.plugin_summary.setText(f"Inventory failed: {msg}"),
             log=self.plugin_log,
             label="inventory",
+            restore_text=lambda: self.plugin_summary.setText(previous_summary),
         )
 
     def plugins_done(self, inv) -> None:
@@ -658,7 +678,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.plugin_table.viewport().mapToGlobal(position))
 
     def _reveal(self, path: Path) -> None:
-        """Open the containing folder in his desktop's file manager."""
+        """Open the containing folder in the desktop's file manager."""
         folder = path if path.is_dir() else path.parent
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
         self.plugin_log.appendPlainText(
@@ -740,8 +760,8 @@ class MainWindow(QMainWindow):
         def job(emit, msi_path, product_code, purge):
             # READ FIRST, MSIEXEC SECOND. `msiexec /x` deletes Windows Installer's own cached
             # copy of the package, and that cache is often the only copy these products have, so
-            # reading the file list afterwards fails *after* the registration is gone (his Fortin
-            # Cali Suite uninstall, 2026-09-26). The MSI is staged out of reach, and an unreadable
+            # reading the file list afterwards fails *after* the registration is gone (observed on a
+            # Fortin Cali Suite uninstall). The MSI is staged out of reach, and an unreadable
             # MSI stops here — before anything is touched.
             try:
                 msi_path = msi_mod.stage_msi(msi_path, SCRATCH)
@@ -791,6 +811,7 @@ class MainWindow(QMainWindow):
             ),
             log=self.plugin_log,
             label="uninstall",
+            restore=(self.btn_uninstall,),
         )
 
     def uninstall_done(self, result) -> None:
@@ -847,6 +868,7 @@ class MainWindow(QMainWindow):
             ),
             log=self.plugin_log,
             label="repair",
+            restore=(self.btn_repair,),
         )
 
     def repair_done(self, result) -> None:
@@ -948,28 +970,30 @@ class MainWindow(QMainWindow):
         self.install_table.setRowCount(0)
         self._busy(True)
         msi_path = Path(self.msi_combo.currentText())
+        # Read the choices HERE, on the GUI thread, and hand them to the job as plain values.
+        # Touching a QWidget from the worker thread is undefined behaviour in Qt - at best the
+        # job sees a stale copy of the options and installs the wrong subset.
+        options = {
+            "include_vst2": self.cb_vst2.isChecked(),
+            "include_aax": self.cb_aax.isChecked(),
+            "include_standalone": self.cb_standalone.isChecked(),
+            "include_presets": self.cb_presets.isChecked(),
+        }
 
-        def job(emit, msi_path: Path, dry_run: bool):
+        def job(emit, msi_path: Path, dry_run: bool, options: dict):
             emit(f"extracting {msi_path.name} -> {SCRATCH}")
             msi_mod.extract(msi_path, SCRATCH)
-            plan = build_plan(
-                msi_path,
-                self.env,
-                SCRATCH,
-                include_vst2=self.cb_vst2.isChecked(),
-                include_aax=self.cb_aax.isChecked(),
-                include_standalone=self.cb_standalone.isChecked(),
-                include_presets=self.cb_presets.isChecked(),
-            )
+            plan = build_plan(msi_path, self.env, SCRATCH, **options)
             return plan, apply_plan(plan, dry_run=dry_run)
 
         self._spawn(
-            job, msi_path, dry_run,
+            job, msi_path, dry_run, options,
             on_line=self.log,
             on_done=lambda result: self.install_done(result, dry_run),
             on_failed=lambda msg: (self.install_failed(msg), self.refresh_plugins()),
             log=self.log,
             label="install",
+            restore_text=lambda: self._busy(False),
         )
 
     def _log_plan_warnings(self, plan, log) -> None:
@@ -1059,7 +1083,7 @@ class MainWindow(QMainWindow):
         # ------------------------------------------------------------------ preset sources
         # The toolkit installs plugins; it does not fetch presets — several of these sites need
         # a sign-in or sit behind a bot filter, so the honest thing is to open the right page in
-        # *his* browser, pre-filled with the plugin he has selected.
+        # *your* browser, pre-filled with the plugin you have selected.
         presets_bar = QHBoxLayout()
         presets_bar.addWidget(QLabel("Preset & IR sources:"))
         self.source_combo = QComboBox()
@@ -1097,7 +1121,7 @@ class MainWindow(QMainWindow):
         )
         self.download_hint.setWordWrap(True)
         self.download_hint.setTextFormat(Qt.TextFormat.RichText)
-        # no stylesheet: `palette(mid)` is near-invisible on his dark theme (he reported the
+        # no stylesheet: `palette(mid)` can be near-invisible on a dark theme (reported as hidden
         # instructions as "hidden"), so this uses the normal window text colour
         layout.addWidget(self.download_hint)
 
@@ -1133,9 +1157,10 @@ class MainWindow(QMainWindow):
         catalogue = catalogue_mod.load_snapshot()
         if refresh:
             self.download_summary.setText("Reading neuraldsp.com/downloads …")
-            catalogue = catalogue_mod.refresh(log=lambda message: self.download_log.appendPlainText(message))
+            catalogue = catalogue_mod.refresh(
+                log=lambda message: self.download_log.appendPlainText(message))
         self._catalogue = catalogue
-        self.refresh_downloads()
+        self.refresh_downloads(background=bool(self.env))
 
     def _registered_names(self) -> set[str]:
         """Product names this prefix knows: from MSIs, and from what is actually on disk.
@@ -1207,28 +1232,75 @@ class MainWindow(QMainWindow):
                 self.download_table.scrollToItem(cell)
                 return
 
-    def refresh_downloads(self) -> None:
-        if not self.env:
-            return
-        keep = self._selected_product_key()
-        # what is already in this prefix: MSI product names, plus what is on disk
-        self._msi_names = set()
+    def _scan_prefix_and_downloads(self):
+        """The slow half of a downloads refresh: cached MSIs, and what is in ~/Downloads.
+
+        Reading product names out of cached MSIs and matching downloaded installers both shell out
+        to msitools, which is seconds of work. This runs on a worker thread; the table is filled
+        afterwards on the GUI thread.
+        """
+        msi_names: set[str] = set()
         for msi_path in msi_mod.find_extracted_msis(self.env.prefix, include_installer_cache=True):
             try:
                 name = msi_mod.identity(msi_path).product_name
             except Exception:  # noqa: BLE001 - one unreadable MSI must not break the tab
                 continue
             if name:
-                self._msi_names.add(_key(name))
-        self._installed_products = self._registered_names()
-
-        # what has been downloaded, and whether it matches a catalogue entry
+                msi_names.add(_key(name))
         downloads = Path.home() / "Downloads"
-        self._downloads = {}
-        pending = installers_mod.discover(self.env, extra_dirs=[downloads]) if downloads.is_dir() else []
-        for item in pending:
-            self._downloads[_key(item.product)] = item.path
+        pending = (installers_mod.discover(self.env, extra_dirs=[downloads])
+                   if downloads.is_dir() else [])
+        return msi_names, {_key(item.product): item.path for item in pending}
 
+    def refresh_downloads(self, *, background: bool = False) -> None:
+        """Fill the table. `background=True` does the slow scan on a worker thread.
+
+        The watcher used to call this every time ~/Downloads changed, which meant a msitools scan
+        on the GUI thread - the freeze the worker threads exist to avoid.
+        """
+        if not self.env:
+            return
+        if background and not self._downloads_scan_running:
+            self._downloads_scan_running = True
+
+            def work(emit):
+                return self._scan_prefix_and_downloads()
+
+            worker = Worker(work)
+            self._workers.append(worker)
+
+            def done(result):
+                self._downloads_scan_running = False
+                msi_names, downloads = result
+                self._msi_names = msi_names
+                self._downloads = downloads
+                self._fill_download_table()
+                before = getattr(self, "_downloads_before", None)
+                self._downloads_before = None
+                if before is not None:
+                    for key, path in self._downloads.items():
+                        if key not in before:
+                            self.download_log.appendPlainText(f"found a new installer: {path}")
+                            self.download_log.appendPlainText(
+                                "  select it and press Install downloaded installer")
+
+            def failed(message):
+                self._downloads_scan_running = False
+                self.download_log.appendPlainText(f"could not list downloads: {message}")
+                self._fill_download_table()
+
+            worker.done.connect(done)
+            worker.failed.connect(failed)
+            worker.finished.connect(lambda: self._forget_worker(worker))
+            worker.start()
+            return
+
+        self._msi_names, self._downloads = self._scan_prefix_and_downloads()
+        self._fill_download_table()
+
+    def _fill_download_table(self) -> None:
+        keep = self._selected_product_key()
+        self._installed_products = self._registered_names()
         rows = self._catalogue.releases
         self.download_table.setRowCount(0)
         ready = 0
@@ -1265,13 +1337,19 @@ class MainWindow(QMainWindow):
             f"~/Downloads   ·   {installed_here} of them installed in this prefix"
         )
 
+    def _forget_worker(self, worker) -> None:
+        """Drop a finished worker so the list does not grow without bound."""
+        try:
+            self._workers.remove(worker)
+        except ValueError:
+            pass
+
     def _downloads_for(self, release) -> Path | None:
         """Match a catalogue entry to a downloaded file — strictly.
 
         `match_download` lives at module level so it can be tested without a real ~/Downloads:
-        the first version matched on *any* shared token, which offered him the Nano Cortex
-        installer for Quad Cortex and for Cortex Control (seen in a rendered screenshot,
-        2026-09-26). A wrong match here is not cosmetic — "Install downloaded installer" would
+        the first version matched on *any* shared token, which offered the Nano Cortex
+        installer for Quad Cortex and for Cortex Control (seen in a rendered screenshot). A wrong match here is not cosmetic — "Install downloaded installer" would
         install the wrong product.
         """
         downloads = Path.home() / "Downloads"
@@ -1291,7 +1369,7 @@ class MainWindow(QMainWindow):
 
         This used to call `refresh_downloads()` every four seconds, which cleared and rebuilt
         every row: the selected row lost its highlight mid-click, and "Open download page" then
-        found nothing selected and did nothing (his report, 2026-09-26: *"the highlight disappears
+        found nothing selected and did nothing (reported 2026-09-26: *"the highlight disappears
         at times... it either does nothing or opens it, result changes randomly"*). Now the tick
         only acts when the set of files in ~/Downloads actually changes.
         """
@@ -1301,12 +1379,10 @@ class MainWindow(QMainWindow):
         if candidates == self._seen_downloads:
             return
         self._seen_downloads = candidates
-        before = dict(self._downloads)
-        self.refresh_downloads()
-        for key, path in self._downloads.items():
-            if key not in before:
-                self.download_log.appendPlainText(f"found a new installer: {path}")
-                self.download_log.appendPlainText("  select it and press Install downloaded installer")
+        # hand the scan to a worker: matching installers means msitools, and doing that on the GUI
+        # thread is what froze the window when a download finished
+        self._downloads_before = dict(self._downloads)
+        self.refresh_downloads(background=True)
 
     def _download_context_menu(self, position) -> None:
         """Right-click a row: the same actions as the buttons, plus the preset sources.
@@ -1437,12 +1513,12 @@ class MainWindow(QMainWindow):
 
         `release` is passed by the context menu; the button connection goes through a lambda
         because Qt hands a `clicked` slot a `checked` bool, which this used to accept as the
-        release and then crash on (`'bool' object has no attribute 'windows'` — his traceback,
+        release and then crash on (`'bool' object has no attribute 'windows'` — an observed traceback,
         2026-09-26). The isinstance guard is the belt to that lambda's braces.
         
 
         Saying so when there is no selection matters: this used to return silently, which is
-        indistinguishable from a broken button (his report: *"it either does nothing or opens
+        indistinguishable from a broken button (reported as *"it either does nothing or opens
         it"* — the four-second table rebuild was clearing the selection underneath the click).
         """
         if release is None or isinstance(release, bool):
@@ -1509,6 +1585,7 @@ class MainWindow(QMainWindow):
             on_failed=lambda msg: (self.install_downloaded_failed(msg), self.refresh_plugins()),
             log=self.download_log,
             label="install",
+            restore=(self.btn_download_install,),
         )
 
     def install_downloaded_done(self, result) -> None:
@@ -1571,6 +1648,7 @@ class MainWindow(QMainWindow):
         if not self.env:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
+        previous_summary = self.pending_summary.text()
         self.pending_summary.setText("Looking for installers…")
         self._spawn(
             lambda emit: installers_mod.discover(self.env),
@@ -1578,6 +1656,7 @@ class MainWindow(QMainWindow):
             on_failed=lambda msg: self.pending_summary.setText(f"Discovery failed: {msg}"),
             log=self.pending_log,
             label="discovery",
+            restore_text=lambda: self.pending_summary.setText(previous_summary),
         )
 
     def pending_done(self, found) -> None:
@@ -1663,6 +1742,7 @@ class MainWindow(QMainWindow):
             ),
             log=self.pending_log,
             label="install",
+            restore=(self.btn_install_pending,),
         )
 
     def install_pending_done(self, result) -> None:
@@ -1674,8 +1754,8 @@ class MainWindow(QMainWindow):
             f"{len(rows)} destination(s) written, {len(bad)} failing verification"
             + ("" if not bad else ": " + ", ".join(p for _, p, _ in bad))
         )
-        for warning in plan.warnings:
-            self.pending_log.appendPlainText(f"! {warning}")
+        # _log_plan_warnings above already printed every warning: repeating them here made one
+        # problem look like two, and the other two install paths do not do it
         self.btn_install_pending.setEnabled(True)
         self.refresh_pending()
 
@@ -1715,6 +1795,7 @@ class MainWindow(QMainWindow):
         if not self.env:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
+        previous_summary = self.scan_summary.text()
         self.scan_summary.setText("Scanning…")
         self._spawn(
             lambda emit: scan_prefix(self.env),
@@ -1722,6 +1803,7 @@ class MainWindow(QMainWindow):
             on_failed=lambda msg: self.scan_summary.setText(f"Scan failed: {msg}"),
             log=self.scan_products,
             label="scan",
+            restore_text=lambda: self.scan_summary.setText(previous_summary),
         )
 
     def scan_done(self, report: Report) -> None:
@@ -1747,6 +1829,7 @@ class MainWindow(QMainWindow):
         self.scan_products.setPlainText("\n".join(lines) or "no registered products found")
 
     def run_triage(self) -> None:
+        previous_summary = self.scan_summary.text()
         self.scan_summary.setText("Triage: reading every Wine prefix on this machine…")
         self._spawn(
             lambda emit: products_mod.render(products_mod.triage(self.env)),
@@ -1754,6 +1837,7 @@ class MainWindow(QMainWindow):
             on_failed=lambda msg: self.scan_summary.setText(f"Triage failed: {msg}"),
             log=self.scan_products,
             label="triage",
+            restore_text=lambda: self.scan_summary.setText(previous_summary),
         )
 
     def triage_done(self, text: str) -> None:

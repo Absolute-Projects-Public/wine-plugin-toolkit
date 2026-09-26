@@ -7,8 +7,9 @@ name = "wine-plugin-toolkit"
 version = "0.6.0"
 description = "Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
+# the core is stdlib-only, so the floor is the oldest Python tested against
 keywords = ["wine", "vst3", "vst2", "msi", "ableton", "audio-plugins"]
 authors = [{ name = "Absolute-Projects-Public" }]
 

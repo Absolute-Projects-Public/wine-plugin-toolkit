@@ -1,7 +1,7 @@
 # Changelog
 
-All notable changes to this project. The versions here are the ones the Arch package and the
-source tarball were built from.
+All notable changes to this project. Versions that were rebuilt during a session without a
+release are not listed separately - what matters is what a published version contains.
 
 ## 0.6.0 - first public release
 

@@ -1,6 +1,6 @@
-"""Checks for the Download Plugins tab bugs he reported (2026-09-26).
+"""Checks for the Download Plugins tab bugs reported (2026-09-26).
 
-Three behaviours, each named after what he saw:
+Three behaviours, each named after what was observed:
 
 1. *"is there a auto refresh on the list about 5 seconds?"* — yes there was, every four seconds,
    and it rebuilt every row. The tick must now do nothing unless the files in ~/Downloads change.
@@ -104,7 +104,7 @@ def main() -> int:
 
     # --- the hint above the list
     hint = window.download_hint.text()
-    check("the hint tells him which button to press", "Download Selected Plugin" in hint, True)
+    check("the hint tells the user which button to press", "Download Selected Plugin" in hint, True)
     check("and mentions the right-click menu", "right-click" in hint.lower(), True)
     check("and the browse button", "Browse Plugins In Browser" in hint, True)
 
