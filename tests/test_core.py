@@ -10,6 +10,7 @@ against a genuine vendor MSI) is a separate, manual step.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -1046,9 +1047,21 @@ updates_mod.cache_file(_home).write_text(updates_mod.json.dumps(_stale))
 check("a cache older than a day is ignored", updates_mod.read_cache(_home) is None, True)
 updates_mod.save_config({"skip_version": "99.0.0"}, home=_home)
 check("skip_version persists", updates_mod.skipped_version(_home), "99.0.0")
-check("update checks default to on", updates_mod.update_check_enabled(_home), True)
-updates_mod.save_config({"update_check": False}, home=_home)
-check("and can be turned off", updates_mod.update_check_enabled(_home), False)
+# the suite runner exports WPT_NO_UPDATE_CHECK=1 (the GUI suites must not hit the network), so the
+# environment switch is cleared for these two, then asserted on its own
+_saved_env = os.environ.pop("WPT_NO_UPDATE_CHECK", None)
+try:
+    check("update checks default to on", updates_mod.update_check_enabled(_home), True)
+    updates_mod.save_config({"update_check": False}, home=_home)
+    check("and can be turned off in the settings file", updates_mod.update_check_enabled(_home), False)
+    updates_mod.save_config({"update_check": True}, home=_home)
+    os.environ["WPT_NO_UPDATE_CHECK"] = "1"
+    check("the environment switch wins over the settings file",
+          updates_mod.update_check_enabled(_home), False)
+finally:
+    os.environ.pop("WPT_NO_UPDATE_CHECK", None)
+    if _saved_env is not None:
+        os.environ["WPT_NO_UPDATE_CHECK"] = _saved_env
 check("skip_version survives the second write", updates_mod.skipped_version(_home), "99.0.0")
 check("a corrupt config is ignored", (updates_mod.config_path(_home).write_text("{oops"),
                                       bool(updates_mod.load_config(_home)))[1], False)
