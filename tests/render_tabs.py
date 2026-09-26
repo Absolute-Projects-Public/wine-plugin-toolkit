@@ -1,7 +1,7 @@
 """Render the tabs to PNGs offscreen so the layout can actually be looked at.
 
 Originally written to answer *"the tooltip info for the download page (instructions) is hidden,
-either placement error or possible text colour?"* — a screenshot answers that in one look.
+either placement error or possible text colour?"*, a screenshot answers that in one look.
 
     QT_QPA_PLATFORM=offscreen python3 tests/render_tabs.py /tmp
 
@@ -9,7 +9,7 @@ Arguments (all optional, positional in this order):
 
     <dir>       where the PNGs go (default /tmp)
     <neutral>   anything but "" / 0 / false blanks the machine's own state, for images that go in
-                the README — a render of a real prefix shows which plugins this machine has
+                the README, a render of a real prefix shows which plugins this machine has
                 installed, which is not something to publish
     <size>      WxH, default 1200x760. Render a small window as well (900x600): a wide window
                 hides column problems that a narrow one shows

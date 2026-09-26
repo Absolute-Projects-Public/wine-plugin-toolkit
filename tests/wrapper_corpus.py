@@ -2,7 +2,7 @@
 
 The unit tests in `test_core.py` use synthetic files, which proves the markers work but
 not that they fire on the installers people actually download. This walks real `.exe`
-files on this machine, identifies each one, and — for anything claiming a Linux route —
+files on this machine, identifies each one, and, for anything claiming a Linux route. 
 actually tries to unpack it and hands the first MSI to `msiinfo` to confirm it is a real
 MSI rather than a file that merely ends in `.msi`.
 
@@ -34,7 +34,7 @@ SKIP_NAMES = {"dxsetup.exe", "wine-mono-9.0.0-x86.msi", "wine-gecko-2.47.4-x86.m
 
 
 def seven_zip_type(path: Path) -> str:
-    """What 7-Zip thinks this file is — an opinion formed without our markers."""
+    """What 7-Zip thinks this file is, an opinion formed without our markers."""
     if not shutil.which("7z"):
         return "7z absent"
     try:
@@ -69,7 +69,7 @@ def msi_is_real(path: Path) -> tuple[bool, str]:
 
 
 def gather(limit_mb: int, min_mb: float = 5.0) -> list[Path]:
-    """Real installers, not every Wine stub — the prefix has hundreds of those."""
+    """Real installers, not every Wine stub, the prefix has hundreds of those."""
     found: list[Path] = []
     roots = [Path.home() / "Downloads", Path.home() / ".cache" / "winetricks", Path.home() / "Documents"]
     for directory in roots:

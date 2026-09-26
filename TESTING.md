@@ -1,7 +1,7 @@
-# Testing `wpt` — what to run, in what order
+# Testing `wpt`, what to run, in what order
 
 `wpt` installs, repairs, inventories and removes **Windows audio plugins in an ableton-linux style Wine
-prefix** — the shape used when a vendor's installer refuses to run under Wine. It unpacks the vendor MSI
+prefix**, the shape used when a vendor's installer refuses to run under Wine. It unpacks the vendor MSI
 with `msitools` and places the payload itself, then verifies every file against the MSI's own `File` table.
 
 Nothing here is destructive unless you ask for it. Every command that changes something has `--dry-run`.
@@ -9,7 +9,7 @@ Nothing here is destructive unless you ask for it. Every command that changes so
 ## What you need
 
 - Linux, Python 3.11+ (3.14 works)
-- `msitools` — `sudo pacman -S msitools` (Arch/CachyOS) · `sudo apt install msitools` (Debian/Ubuntu)
+- `msitools`, `sudo pacman -S msitools` (Arch/CachyOS) · `sudo apt install msitools` (Debian/Ubuntu)
 - A Wine prefix of the ableton-linux shape: `~/.wine-ableton` plus a staged
   `~/.local/opt/wine-d2d1-nspa-<version>` tree. Point it elsewhere with `--prefix` / `--tree`.
 - `pyside6` only if you want the GUI (`sudo pacman -S pyside6`)
@@ -46,12 +46,12 @@ wpt-gui          # the GUI: Environment, Plugins, Download, Pending Install, Ins
 
 Worth knowing what "good" looks like: `env` resolves every path, `list` shows sizes matching the MSI
 (`ok`), `scan` reports `0 MISSING` on a healthy prefix. If `scan` reports missing paths, that is the exact
-failure this tool exists for — send that output.
+failure this tool exists for, send that output.
 
 ## What to report back
 
 - your distro, Python and Wine-tree version (`wpt env` shows both, plus the toolkit version)
-- the output of `wpt list --json` and `wpt products --json` — machine-readable and safe to paste
+- the output of `wpt list --json` and `wpt products --json`, machine-readable and safe to paste
 - anything that crashed, with the traceback
 - whether the GUI opened and every tab rendered
 
@@ -77,7 +77,7 @@ Vendors ship a `.exe`; this tool needs the `.msi` inside it. `wpt install` takes
 by the cheapest route: use the MSI as-is → use the MSI already cached in the prefix → unpack it with the
 tool that suits the wrapper's own format → *or*, with `--run-wrapper` (or the GUI's confirmation), run the
 vendor installer under Wine once and pick up what it caches. Neural DSP's wrappers are Advanced Installer
-LZMA packages that no Linux tool can unpack, so for those the Wine step is the one that works — the tool
+LZMA packages that no Linux tool can unpack, so for those the Wine step is the one that works, the tool
 tells you which route it took instead of failing silently.
 
 You can ask it what it makes of a file before committing to anything, and nothing is written outside a
@@ -91,14 +91,14 @@ wpt wrappers --json                             # machine-readable
 ```
 
 It recognises NSIS, Inno Setup, InstallShield, WiX Burn bundles, 7-Zip and CAB/IExpress self-extractors,
-and Advanced Installer — and for an unrecognised file it falls back to trying every unpacker you have
+and Advanced Installer, and for an unrecognised file it falls back to trying every unpacker you have
 installed. Where a wrapper carries several MSIs (Windows runtime bundles do), it names the one it would use
 and lists the others rather than picking silently.
 
 The **Download** tab is the front end for all of it: their catalogue with versions and release dates,
 whether each plugin is installed in your prefix, whether an installer is already in `~/Downloads`, and
 *Download Selected Plugin* (their plugin links need you signed in, so that step is yours). Where the file
-is installed from is the **Pending Install** tab — download here, install there — and the tab order follows
+is installed from is the **Pending Install** tab, download here, install there, and the tab order follows
 that flow: Environment, Plugins, Download, Pending Install, Install MSI, Diagnostics.
 
 ## Getting more presets
@@ -110,7 +110,7 @@ wpt presets --open "forum" --product "Nolly"     # where a site supports it, ope
 ```
 
 Preset Junkie, the Neural DSP forum's preset threads, Honest Amp Sims' Preset Vault, r/NeuralDSP and two
-pack shops. The toolkit opens the page in your own browser — several of them need a sign-in, which is
+pack shops. The toolkit opens the page in your own browser, several of them need a sign-in, which is
 exactly why it does not try to fetch anything itself.
 
 ## What the verdicts mean
@@ -118,11 +118,11 @@ exactly why it does not try to fetch anything itself.
 | verdict | meaning |
 |---|---|
 | `ok` | the file on disk is exactly the size the MSI's `File` table promised |
-| `unverified` | no MSI that describes this file was found, so there is nothing to compare it with — `wpt find-msi` shows which MSIs it can see |
-| (not listed) | executables in `Program Files` that no plugin MSI describes — Wine's own tools and other vendors' helpers. Counted in one line; `wpt list --all-standalone` lists them |
+| `unverified` | no MSI that describes this file was found, so there is nothing to compare it with, `wpt find-msi` shows which MSIs it can see |
+| (not listed) | executables in `Program Files` that no plugin MSI describes. Wine's own tools and other vendors' helpers. Counted in one line; `wpt list --all-standalone` lists them |
 | `BROKEN` | the size disagrees with the MSI: usually a half-written install, and `wpt repair` re-places just that file |
 
-`unverified` is not a failure. It means the toolkit has no reference for the file — commonly because the
+`unverified` is not a failure. It means the toolkit has no reference for the file, commonly because the
 product was installed by hand, or by a wrapper that kept its MSI somewhere unusual.
 
 ## "It installed but my DAW can't see it"
@@ -134,7 +134,7 @@ wpt inspect <the msi>        # or: wpt install <the download> --dry-run
 ```
 
 If the plan says *no VST3/VST2/AAX payload*, the download is an application or a driver rather than a
-plugin — some vendor downloads are exactly that (Neural DSP's Nano Cortex is a Windows USB driver plus a
+plugin, some vendor downloads are exactly that (Neural DSP's Nano Cortex is a Windows USB driver plus a
 control panel). It is refused by default so nothing lands in the wrong place; `--include-app-files` places
 its files anyway, but a DAW will still not scan them. A driver also wants its INF and service registration,
 which only its own installer performs.
@@ -153,7 +153,7 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 - **Uninstall routes through `msiexec /x` first**, which is a no-op on prefixes where the product was
   never registered with Windows Installer. That is expected, not a bug: the file-level step does the work.
   It also deletes Windows Installer's cached copy of the MSI, which is why the toolkit reads everything it
-  needs from that MSI *before* running it — and why a product uninstalled that way can have no MSI left
+  needs from that MSI *before* running it, and why a product uninstalled that way can have no MSI left
   afterwards. If you then ask the toolkit to remove it again it will tell you what the prefix still holds
   under that name instead.
 - Scope for this version: **only** the ableton-linux style prefix. Steam/Lutris/Bottles prefixes are
@@ -172,7 +172,7 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 - `uninstall --purge` removes the product's own registration entries and stale pointers to its files; it
   leaves unrelated vendor cache keys alone.
 - `scan`'s "plugins present" list can include plugin support dlls (Qt's `qwindows.dll` lives in plugin
-  directories) — legitimate entries, just more than the four paths you may be looking for.
+  directories), legitimate entries, just more than the four paths you may be looking for.
 
 ## Tests, if you want to run them
 
@@ -188,7 +188,7 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs
 `tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception.
 The install/uninstall/repair buttons are clicked too, with `apply_plan`, `uninstall_product` and
 `purge_registry` replaced by recording stubs, so the handlers run for real (that is where the wiring
-bugs live) while nothing can reach the prefix. Only buttons that open a modal dialog are skipped —
+bugs live) while nothing can reach the prefix. Only buttons that open a modal dialog are skipped. 
 it exists because a `clicked` signal once handed a `checked` bool to a slot that took a release and crashed.
 `tests/render_tabs.py` renders tabs to PNG so you can *look* at the layout instead of describing it.
 
@@ -224,7 +224,7 @@ rows, and the process to exit cleanly.
 QT_QPA_PLATFORM=offscreen python3 tests/gui_refresh_repro.py
 ```
 
-`tests/wrapper_corpus.py` is the one for a real machine — it identifies every installer found in
+`tests/wrapper_corpus.py` is the one for a real machine, it identifies every installer found in
 `~/Downloads`, `~/.cache/winetricks` and the prefix root, and for each one that claims a Linux route it
 actually unpacks it and checks the MSI that comes out with `msiinfo`:
 

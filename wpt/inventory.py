@@ -108,7 +108,7 @@ def _msi_indexes(msis: list[Path]) -> tuple[dict[str, int], dict[str, Path]]:
     """One pass over the cached MSIs: expected size *and* owning MSI per file name.
 
     Both answers come from the same File table, and reading that table is the expensive part
-    (it shells out to msitools), so they are built together rather than in two loops — that
+    (it shells out to msitools), so they are built together rather than in two loops, that
     halving is what took `wpt list` from 54 s back to single figures once Wine's installer
     cache joined the search.
     """

@@ -545,8 +545,8 @@ def cmd_uninstall(args) -> int:
     **Order matters, and it cost us a real uninstall to learn it.** `msiexec /x` deletes the copy
     of the package that Windows Installer keeps in `drive_c/windows/Installer/`, and on this
     stack that cache is often the only copy a product has (a wrapper installed via Wine never
-    writes one into its own vendor folder). So everything the MSI can tell us — its ProductCode,
-    its File table, the plan — is read **first**, a copy of the MSI is staged out of reach, and
+    writes one into its own vendor folder). So everything the MSI can tell us, its ProductCode,
+    its File table, the plan, is read **first**, a copy of the MSI is staged out of reach, and
     only then is msiexec run. If the MSI cannot be read at all, this fails before touching
     anything rather than halfway through.
     """

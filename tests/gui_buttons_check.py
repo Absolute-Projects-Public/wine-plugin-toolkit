@@ -1,6 +1,6 @@
 """Click every button in every tab. Bugs of the "Qt passes an argument you did not expect"
 kind (a `clicked` signal handing a `checked` bool to a slot that took a release) show up here
-and nowhere else — an observed traceback, 2026-09-26:
+and nowhere else, an observed traceback, 2026-09-26:
 
     AttributeError: 'bool' object has no attribute 'windows'
 
@@ -8,7 +8,7 @@ Each click must either do something it can explain in its log, or be disabled. A
 raises is a failure.
 
 **Nothing this script clicks may touch the prefix.** The buttons that install, uninstall or purge
-are clicked too — with the write calls replaced by recording stubs, so the handler runs for real
+are clicked too, with the write calls replaced by recording stubs, so the handler runs for real
 (that is where the wiring bugs are) while `apply_plan`, `uninstall_product` and `purge_registry`
 only record that they were reached. Buttons that open a modal dialog are still skipped: a file
 picker would sit there until the timeout.

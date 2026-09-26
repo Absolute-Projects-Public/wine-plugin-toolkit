@@ -5,7 +5,7 @@
    running. The disabling used to stay, so a click that raced a refresh left a permanently grey
    button and a status line claiming work that never started.
 2. **The job must not read widgets.** The install job used to call `self.cb_vst2.isChecked()` and
-   friends from the worker thread, which is undefined behaviour in Qt — and would install the
+   friends from the worker thread, which is undefined behaviour in Qt, and would install the
    wrong subset of the payload if the flag read was stale. The options are read on the GUI thread
    and passed as plain values.
 

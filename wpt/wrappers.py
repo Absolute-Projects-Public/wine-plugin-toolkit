@@ -4,18 +4,18 @@ Neural DSP (and most vendors) ship an installer **.exe** that is a self-extracti
 end around an **.msi**. `msitools` only reads MSIs, so something has to bridge that gap,
 and there are exactly two honest ways:
 
-1. **unpack the wrapper on Linux** — the wrapper's own format decides which tool can do
+1. **unpack the wrapper on Linux**, the wrapper's own format decides which tool can do
    it: `innoextract` for Inno Setup, `7z` for NSIS / 7-Zip SFX / Burn bundles and for
    cabinets, `unshield` for InstallShield's own cabinet, `cabextract` for bare CABs and
    IExpress;
-2. **run the wrapper under Wine once** — the vendor's own installer writes its MSI into
+2. **run the wrapper under Wine once**, the vendor's own installer writes its MSI into
    the prefix (that is where the cached copies in `~/.wine-ableton` came from). This is
    what a user would do by hand; the toolkit just does it, waits, and picks the MSI up.
 
-Advanced Installer's LZMA payload (what Neural DSP uses — the `Caphyon\\Advanced
+Advanced Installer's LZMA payload (what Neural DSP uses, the `Caphyon\\Advanced
 Installer\\LZMA\\{GUID}` keys in the prefix registry are the fingerprint) is **not**
 unpackable by any Linux tool, so for these wrappers route 2 is the one that works, and
-saying so beats pretending otherwise — and beats spending minutes letting every tool fail
+saying so beats pretending otherwise, and beats spending minutes letting every tool fail
 on a 500 MB file first.
 
 Three things make route 1 usable in practice rather than theoretically:
@@ -28,7 +28,7 @@ Three things make route 1 usable in practice rather than theoretically:
   the MSI magic (OLE compound document, `d0cf11e0a1b11ae1`) rather than for `*.cab`
   and `*.msi`. Verified on `vc_redist.x64.exe`: `cabextract` yields `a9`/`a10`, which
   `msiinfo` reads as *Microsoft Visual C++ 2022 X64 Minimum/Additional Runtime*;
-- **nesting is followed** — a member that is itself a cabinet (the `Windows6.1-KB2999226`
+- **nesting is followed**, a member that is itself a cabinet (the `Windows6.1-KB2999226`
   cabs inside that same bundle) is opened in turn.
 """
 
@@ -48,7 +48,7 @@ from .environment import Environment
 
 # How much of a wrapper to search for fingerprints. Installers put their identity in the
 # PE resources near the front; self-extractors sometimes only name themselves in an
-# overlay at the very end, so the tail is read too (but only a slice — these files reach
+# overlay at the very end, so the tail is read too (but only a slice, these files reach
 # 500 MB and reading them whole is not worth the seconds).
 HEAD_BYTES = 6 * 1024 * 1024
 TAIL_BYTES = 1024 * 1024
@@ -306,8 +306,8 @@ def msi_product_name(path: Path, timeout: int = 60) -> str:
 def is_msi_file(path: Path) -> bool:
     """An MSI by content: an OLE compound document that msitools agrees is an installer.
 
-    File names cannot be trusted here — a Burn bundle's MSIs come out of its cabinet as
-    `a9`, `a10` — and neither can the SummaryInformation string: a real Neural DSP MSI was
+    File names cannot be trusted here, a Burn bundle's MSIs come out of its cabinet as
+    `a9`, `a10`, and neither can the SummaryInformation string: a real Neural DSP MSI was
     checked that carries no "Windows Installer"/"Microsoft Installer" text in its first
     256 KB at all. So: OLE magic first, then let msitools be the judge when it is present.
     """
@@ -450,7 +450,7 @@ def wrapper_workdir(scratch: Path) -> Path:
     Deliberately a **sibling** of the MSI scratch dir, not a child of it: `msi.extract()`
     empties its scratch before every extraction (so one product's payload cannot leak into
     the next plan), and that wipe would delete the MSI we just unpacked out of the
-    wrapper. Found the hard way — the CLI picked the MSI up and then could not open it.
+    wrapper. Found the hard way, the CLI picked the MSI up and then could not open it.
     """
     scratch = Path(scratch)
     return scratch.parent / f"{scratch.name}-unpack"
@@ -507,7 +507,7 @@ def _path_arch(path: Path) -> int:
 def _pick_msi(candidates: list[Path], hint: str) -> tuple[Path, list[Path]]:
     """Choose between MSIs found in one wrapper, and report the others.
 
-    Candidates are scored on the MSI's *own* ProductName where msitools can read it — a
+    Candidates are scored on the MSI's *own* ProductName where msitools can read it, a
     Burn bundle's members are called `a0`…`a13`, so the file name says nothing, while the
     ProductName says "Microsoft Visual C++ 2022 X64 Minimum Runtime".
 
@@ -733,12 +733,12 @@ def _match_cached(candidates: set[Path], hint: str) -> Path | None:
     Two kinds of evidence count, and something has to count:
 
     * a shared word (`"Archetype Nolly X.msi"` for `"archetype-nolly-x-setup.exe"`);
-    * the squashed names containing one another once a trailing version is dropped — vendor
+    * the squashed names containing one another once a trailing version is dropped, vendor
       wrappers often run the product name together with the version
       (`"ArchetypeNollyXv1.0.2"` against `"Archetype Nolly X"`).
 
     Being the *only* candidate in the cache is not evidence. That used to be enough, which meant a
-    fresh wrapper could be handed a completely different product's MSI — and then "verified"
+    fresh wrapper could be handed a completely different product's MSI, and then "verified"
     against that product's own File table, so it installed the wrong thing and reported success.
     """
     if not candidates:

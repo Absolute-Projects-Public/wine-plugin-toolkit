@@ -1,7 +1,7 @@
 """Reproduce the reported crash: refresh the Plugins tab while a refresh is still running.
 
 Reported: a user disabled the VST3, then hit refresh, and the GUI went down. The suspect is
-`MainWindow.worker` — a single attribute holding a QThread. Reassigning it drops the last
+`MainWindow.worker`, a single attribute holding a QThread. Reassigning it drops the last
 Python reference to a *running* QThread, which Qt aborts on
 ("QThread: Destroyed while thread is still running").
 

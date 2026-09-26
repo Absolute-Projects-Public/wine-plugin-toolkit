@@ -70,13 +70,13 @@ check("Environment tab rendered", lambda: dict(win.env.describe()) if win.env el
 check("Plugins tab: inventory", lambda: f"{len(gui.inventory_mod.build(win.env).entries)} file(s)")
 win.refresh_plugins()
 wait_for_worker(win)
-check("Plugins tab: rows rendered", lambda: f"{win.plugin_table.rowCount()} row(s) — {win.plugin_summary.text()}")
+check("Plugins tab: rows rendered", lambda: f"{win.plugin_table.rowCount()} row(s). {win.plugin_summary.text()}")
 
 # Diagnostics tab: same call the worker makes
 check("Diagnostics tab: scan", lambda: f"{len(gui.scan_prefix(win.env).entries)} registry path(s)")
 win.run_scan()
 wait_for_worker(win)
-check("Diagnostics tab: rows rendered", lambda: f"{win.scan_table.rowCount()} row(s) — {win.scan_summary.text()}")
+check("Diagnostics tab: rows rendered", lambda: f"{win.scan_table.rowCount()} row(s). {win.scan_summary.text()}")
 
 # product triage across every prefix, and the purge checkbox the uninstall dialog reads
 check("Diagnostics tab: triage all prefixes",
@@ -95,7 +95,7 @@ check("Download tab: catalogue loaded",
 win.refresh_downloads()
 app.processEvents()
 check("Download tab: rows rendered",
-      lambda: f"{win.download_table.rowCount()} row(s) — {win.download_summary.text()[:70]}")
+      lambda: f"{win.download_table.rowCount()} row(s). {win.download_summary.text()[:70]}")
 check("Download tab: an installer in ~/Downloads is matched",
       lambda: f"{len(win._downloads)} found, staged for Pending Install")
 check("Download tab: catalogue can be refreshed from the live page",
@@ -106,7 +106,7 @@ check("Pending Install tab: discover installers", lambda: f"{len(gui.installers_
 win.refresh_pending()
 wait_for_worker(win)
 check("Pending Install tab: rows rendered",
-      lambda: f"{win.pending_table.rowCount()} row(s) — {win.pending_summary.text()}")
+      lambda: f"{win.pending_table.rowCount()} row(s). {win.pending_summary.text()}")
 
 # enable/disable path, dry run only -- the smoke test must not touch the user's plugins
 check("enable/disable wiring (dry run)",

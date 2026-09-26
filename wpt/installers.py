@@ -172,7 +172,7 @@ def match_download(product: str, candidates) -> Path | None:
 
     Two chances, both strict: the product's own key appears inside the file's key
     ("archetyperabeax" in "archetyperabeaxv1110"), or every significant word of the product
-    appears in the file name. A single shared word is not enough — "Cortex Control" and
+    appears in the file name. A single shared word is not enough, "Cortex Control" and
     "Quad Cortex" must never resolve to "NeuralDSP Nano Cortex v5.74.0.exe".
     """
     product_key = _norm(product)

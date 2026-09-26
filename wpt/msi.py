@@ -41,7 +41,7 @@ def _run(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise MsiError(f"{args[0]} did not finish within {timeout}s reading this installer "
-                       "— the file may be corrupt or on a stalled mount") from exc
+                       ", the file may be corrupt or on a stalled mount") from exc
     except OSError as exc:
         raise MsiError(f"could not run {args[0]}: {exc}") from exc
     if proc.returncode != 0 and "table not found" not in (proc.stderr or ""):
@@ -205,7 +205,7 @@ def expected_sizes(msi: Path, use_cache: bool = True) -> dict[str, int]:
 
 # The directory properties these vendors' installers declare for their payload. An MSI that
 # declares one of these is a plugin product's MSI; one that declares none is a runtime,
-# a driver or a service (Bonjour, PACE, Wine Mono all declare none — checked 2026-09-26).
+# a driver or a service (Bonjour, PACE, Wine Mono all declare none, checked 2026-09-26).
 VENDOR_PAYLOAD_DIRS = ("VST3DIR", "VSTDIR", "AAXDIR", "APPDIR", "PREDIR")
 
 _PAYLOAD_DECLARED: dict[tuple[str, float, int], bool] = {}
@@ -286,7 +286,7 @@ def stage_msi(msi: Path, scratch: Path) -> Path:
     """Copy an MSI somewhere safe *before* anything can delete it.
 
     `msiexec /x` removes the copy of the package Windows Installer keeps in
-    `drive_c/windows/Installer/` — and on this stack that cache is often the only copy a product
+    `drive_c/windows/Installer/`, and on this stack that cache is often the only copy a product
     has. Read the file list after running msiexec and it is simply not there any more: that is
     exactly what happens on an uninstall, which removed
     `d80a.msi` and then failed to read it, leaving the presets and registry entries behind.
@@ -376,7 +376,7 @@ def extract(msi: Path, dest: Path, *, clean: bool = True) -> Path:
             ["msiextract", "-C", str(dest), str(msi)], capture_output=True, text=True, timeout=900
         )
     except subprocess.TimeoutExpired as exc:
-        raise MsiError("msiextract did not finish within 900s — a 400 MB payload on a slow disk can "
+        raise MsiError("msiextract did not finish within 900s: a 400 MB payload on a slow disk can "
                        "take a while, but this usually means the installer is corrupt") from exc
     except OSError as exc:
         raise MsiError(f"could not run msiextract: {exc}") from exc

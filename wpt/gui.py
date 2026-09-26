@@ -492,9 +492,9 @@ class MainWindow(QMainWindow):
 
     def _spawn(self, fn, *args, on_line=None, on_done=None, on_failed=None, log=None, label="job",
                restore=None, restore_text=None) -> bool:
-        """Run one job off the GUI thread — safely.
+        """Run one job off the GUI thread, safely.
 
-        Two rules here, both learned from a real crash in the field — a user disabled a
+        Two rules here, both learned from a real crash in the field, a user disabled a
         plugin, hit refresh, and the window died:
 
         - **a running QThread must keep a Python reference.** The old code did
@@ -514,7 +514,7 @@ class MainWindow(QMainWindow):
                 self._restore_buttons(*restore)
             if restore_text:
                 restore_text()
-            message = f"{label}: still working on the previous one — try again in a moment"
+            message = f"{label}: still working on the previous one, try again in a moment"
             if log is not None:
                 if callable(log):
                     log(message)
@@ -559,7 +559,7 @@ class MainWindow(QMainWindow):
         """Give any running job a moment to finish before the process goes away.
 
         A QThread that is still running when the interpreter tears down aborts the process
-        (SIGABRT, no traceback) — the same rule that made `closeEvent` wait. This is the safety
+        (SIGABRT, no traceback), the same rule that made `closeEvent` wait. This is the safety
         net for every other way out (a quit from the menu, a session logout, a script that
         closes the window mid-refresh).
         """
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         """Never let the window close out from under a running job.
 
         A QThread that is still running when its last reference goes away makes Qt abort
-        the process (SIGABRT, no exception, no traceback) — which is how this started: a
+        the process (SIGABRT, no exception, no traceback), which is how this started: a
         plugin was disabled, the window was refreshed, and it vanished. The window now stays alive
         (hidden) until the job finishes, then closes itself.
         """
@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
         self.download_table.setRowCount(0)
         self._fill_download_table()
         self.plugin_table.setRowCount(0)
-        self.plugin_summary.setText("No inventory yet — press 'Refresh inventory'.")
+        self.plugin_summary.setText("No inventory yet: press 'Refresh inventory'.")
 
     def apply_theme(self, dark: bool | None = None, *, remember: bool = True) -> None:
         """Set the palette, and remember the choice in the same config.json the update check uses.
@@ -690,7 +690,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(dark)
 
         hint = QLabel(
-            "Nothing here is required for the toolkit to work — the update check is the only thing "
+            "Nothing here is required for the toolkit to work. The update check is the only thing "
             "that ever reaches the network, and it reads the public releases page."
         )
         hint.setWordWrap(True)
@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
         bar2.addWidget(self.cb_purge)
         self.cb_all_exes = QCheckBox("show other .exe files")
         self.cb_all_exes.setToolTip(
-            "Also list executables in Program Files that no plugin MSI describes — Wine's own\n"
+            "Also list executables in Program Files that no plugin MSI describes. Wine's own\n"
             "tools (iexplore, wordpad, wmplayer) and helpers other vendors install there.\n"
             "They are not plugins, so they are hidden by default."
         )
@@ -796,7 +796,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(bar2)
 
         self.plugin_hint = QLabel(
-            "Tick a row to select it, then use the buttons above — or <b>right-click a row</b> for repair, "
+            "Tick a row to select it, then use the buttons above, or <b>right-click a row</b> for repair, "
             "uninstall, enable/disable, the file's path and this plugin's preset sites."
         )
         self.plugin_hint.setWordWrap(True)
@@ -818,13 +818,13 @@ class MainWindow(QMainWindow):
         self.plugin_table.customContextMenuRequested.connect(self._plugin_context_menu)
         layout.addWidget(self.plugin_table, 2)
         self.plugin_empty = _empty_note(
-            "No inventory yet — press 'Refresh inventory' to list every plugin file in the prefix "
+            "No inventory yet: press 'Refresh inventory' to list every plugin file in the prefix "
             "and check each one's size against its cache MSI."
         )
         layout.addWidget(self.plugin_empty, 2)
         _show_rows(self.plugin_table, self.plugin_empty, 0)
 
-        self.plugin_log = _log_pane("Job output appears here — inventory, repairs, uninstalls and rescans from this tab.", 1000)
+        self.plugin_log = _log_pane("Job output appears here: inventory, repairs, uninstalls and rescans from this tab.", 1000)
         layout.addWidget(self.plugin_log, 1)
         return page
 
@@ -1023,15 +1023,15 @@ class MainWindow(QMainWindow):
                 else "Not registered with Windows Installer in this prefix, so msiexec has nothing "
                 "to remove and the files go directly.\n"
             )
-            + f"Files: every file {msi_path.name} placed will be deleted — VST3, VST2, AAX, "
+            + f"Files: every file {msi_path.name} placed will be deleted. VST3, VST2, AAX, "
             "standalone and the factory presets it lists.\n\nYour own presets and any downloaded "
             "packs are copied to ~/.local/share/wpt/presets/ first, so they survive either way."
             + (
                 "\n\nREGISTRY PURGE is on and will also remove the product's registry entries, so "
                 "nothing is left pointing at the deleted files.\nIt does NOT free an activation: if "
                 "this plugin was activated here and you are done with this prefix, deactivate it in "
-                "iLok License Manager first — or use 'Report as Unusable' there if the location is "
-                "unreachable — otherwise the licence slot stays consumed."
+                "iLok License Manager first, or use 'Report as Unusable' there if the location is "
+                "unreachable. Otherwise the licence slot stays consumed."
                 if purge
                 else ""
             ),
@@ -1046,7 +1046,7 @@ class MainWindow(QMainWindow):
             # copy of the package, and that cache is often the only copy these products have, so
             # reading the file list afterwards fails *after* the registration is gone (observed on a
             # Fortin Cali Suite uninstall). The MSI is staged out of reach, and an unreadable
-            # MSI stops here — before anything is touched.
+            # MSI stops here, before anything is touched.
             try:
                 msi_path = msi_mod.stage_msi(msi_path, SCRATCH)
                 emit(f"reading {msi_path.name} before msiexec runs")
@@ -1054,7 +1054,7 @@ class MainWindow(QMainWindow):
                 plan = build_plan(msi_path, self.env, SCRATCH, include_aax=True)
             except (OSError, msi_mod.MsiError) as exc:
                 raise RuntimeError(
-                    f"cannot read {msi_path.name} for its file list ({exc}) — nothing was removed"
+                    f"cannot read {msi_path.name} for its file list ({exc}), nothing was removed"
                 ) from exc
             emit(f"this MSI describes {len(plan.actions)} destination(s)")
 
@@ -1215,7 +1215,7 @@ class MainWindow(QMainWindow):
 
         self.install_table = QTableWidget(0, 3)
         self.install_empty = _empty_note(
-            "No plan yet — pick an installer MSI above, then 'Preview plan' to see exactly which "
+            "No plan yet: pick an installer MSI above, then 'Preview plan' to see exactly which "
             "files it would place before anything is written."
         )
         layout.addWidget(self.install_empty, 2)
@@ -1224,7 +1224,7 @@ class MainWindow(QMainWindow):
         _fit_columns(self.install_table, stretch={1: 300, 2: 220}, contents=(0,), elide={1: True})
         layout.addWidget(self.install_table, 2)
 
-        self.install_log = _log_pane("Job output appears here — the plan, the destination list and every verified file.", 2000)
+        self.install_log = _log_pane("Job output appears here: the plan, the destination list and every verified file.", 2000)
         layout.addWidget(self.install_log, 1)
         return page
 
@@ -1366,7 +1366,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(bar)
 
         # ------------------------------------------------------------------ preset sources
-        # The toolkit installs plugins; it does not fetch presets — several of these sites need
+        # The toolkit installs plugins; it does not fetch presets, several of these sites need
         # a sign-in or sit behind a bot filter, so the honest thing is to open the right page in
         # *your* browser, pre-filled with the plugin you have selected.
         presets_bar = QHBoxLayout()
@@ -1381,7 +1381,7 @@ class MainWindow(QMainWindow):
         # stretch, with nothing tying it to the row's label - read as an unanchored control.
         self.btn_source_open = QPushButton("Open in browser")
         self.btn_source_open.setToolTip(
-            "Opens the selected source in your own browser — nothing is downloaded by the toolkit.\n"
+            "Opens the selected source in your own browser. Nothing is downloaded by the toolkit.\n"
             "If a plugin is selected in the table, sources that support searching open already\n"
             "searching for it."
         )
@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(presets_bar)
 
         self.download_summary = QLabel(
-            "Neural DSP installers. Pick a plugin and open its page in your browser — the download\n"
+            "Neural DSP installers. Pick a plugin and open its page in your browser. The download\n"
             "lands in ~/Downloads, and the Pending Install tab installs it from there (the .exe → .msi\n"
             "step is handled for you)."
         )
@@ -1403,7 +1403,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.download_summary)
 
         self.download_hint = QLabel(
-            "Click a plugin, then <b>Download Selected Plugin</b> (their links need you signed in) — or "
+            "Click a plugin, then <b>Download Selected Plugin</b> (their links need you signed in), or "
             "<b>Browse Plugins In Browser</b> for their full list. <b>Right-click a row</b> for the preset "
             "&amp; IR sites. Downloaded installers show up on the <b>Pending Install</b> tab."
         )
@@ -1423,7 +1423,7 @@ class MainWindow(QMainWindow):
         self.download_table.customContextMenuRequested.connect(self._download_context_menu)
         layout.addWidget(self.download_table, 3)
 
-        self.download_log = _log_pane("Job output appears here — catalogue refreshes and installer downloads.", 1000)
+        self.download_log = _log_pane("Job output appears here: catalogue refreshes and installer downloads.", 1000)
         layout.addWidget(self.download_log, 1)
 
         self._downloads: dict[str, Path] = {}
@@ -1450,7 +1450,7 @@ class MainWindow(QMainWindow):
     def _registered_names(self) -> set[str]:
         """Product names this prefix knows: from MSIs, and from what is actually on disk.
 
-        MSI names alone are not enough — a toolkit-placed install need not leave an MSI behind at
+        MSI names alone are not enough, a toolkit-placed install need not leave an MSI behind at
         all, and a driver/application package is not listed anywhere a plugin would be, so both
         sources are combined. Directory listings only: this runs on a timer and must stay cheap.
         """
@@ -1485,7 +1485,7 @@ class MainWindow(QMainWindow):
         return names
 
     def _is_installed(self, release) -> str:
-        """'', 'installed', or 'files only' — a toolkit-placed install has no MSI to prove it."""
+        """'', 'installed', or 'files only', a toolkit-placed install has no MSI to prove it."""
         names = self._installed_products
         key = _key(release.product)
         if key in self._msi_names:
@@ -1630,11 +1630,11 @@ class MainWindow(QMainWindow):
             pass
 
     def _downloads_for(self, release) -> Path | None:
-        """Match a catalogue entry to a downloaded file — strictly.
+        """Match a catalogue entry to a downloaded file, strictly.
 
         `match_download` lives at module level so it can be tested without a real ~/Downloads:
         the first version matched on *any* shared token, which offered the Nano Cortex
-        installer for Quad Cortex and for Cortex Control (seen in a rendered screenshot). A wrong match here is not cosmetic — "Install downloaded installer" would
+        installer for Quad Cortex and for Cortex Control (seen in a rendered screenshot). A wrong match here is not cosmetic, "Install downloaded installer" would
         install the wrong product.
         """
         downloads = Path.home() / "Downloads"
@@ -1643,14 +1643,14 @@ class MainWindow(QMainWindow):
         return match_download(release.product, [*downloads.glob("*.exe"), *downloads.glob("*.msi")])
 
     def _download_candidates(self) -> set[Path]:
-        """The installer files sitting in ~/Downloads — cheap enough to check on a timer."""
+        """The installer files sitting in ~/Downloads, cheap enough to check on a timer."""
         downloads = Path.home() / "Downloads"
         if not downloads.is_dir():
             return set()
         return {p for p in downloads.glob("*.exe")} | {p for p in downloads.glob("*.msi")}
 
     def _watch_tick(self) -> None:
-        """Notice a freshly downloaded installer — and otherwise leave the table alone.
+        """Notice a freshly downloaded installer, and otherwise leave the table alone.
 
         This used to call `refresh_downloads()` every four seconds, which cleared and rebuilt
         every row: the selected row lost its highlight mid-click, and "Open download page" then
@@ -1672,7 +1672,7 @@ class MainWindow(QMainWindow):
     def _download_context_menu(self, position) -> None:
         """Right-click a row: the same actions as the buttons, plus the preset sources.
 
-        Right-clicking also *selects* the row under the cursor — the buttons act on the selection,
+        Right-clicking also *selects* the row under the cursor, the buttons act on the selection,
         so a menu that did not do this would look like a menu that does nothing.
         """
         row = self.download_table.rowAt(position.y())
@@ -1727,7 +1727,7 @@ class MainWindow(QMainWindow):
             self.download_log.appendPlainText(f"no source called '{name}'")
             return
         self.download_log.appendPlainText(
-            f"opened {name} for {product}: {url}" if opened else f"could not open a browser — {url}"
+            f"opened {name} for {product}: {url}" if opened else f"could not open a browser. {url}"
         )
 
     def _copy_to_clipboard(self, text: str) -> None:
@@ -1767,7 +1767,7 @@ class MainWindow(QMainWindow):
         self.btn_source_note.setText(source.note + (f"  ({'; '.join(tail)})" if tail else ""))
 
     def _selected_product(self) -> str:
-        """The plugin selected in the catalogue table, if any — that is what gets searched."""
+        """The plugin selected in the catalogue table, if any, that is what gets searched."""
         rows = self.download_table.selectionModel().selectedRows()
         if not rows:
             return ""
@@ -1783,30 +1783,30 @@ class MainWindow(QMainWindow):
             return
         where = f" for {product}" if product and sources_mod.find(name or "") and sources_mod.find(name or "").searchable else ""
         self.download_log.appendPlainText(
-            f"opened {url}{where}" if opened else f"could not open a browser — the link is: {url}"
+            f"opened {url}{where}" if opened else f"could not open a browser. The link is: {url}"
         )
 
     def browse_plugins_in_browser(self) -> None:
-        """The vendor's own downloads index — every plugin link in one place."""
+        """The vendor's own downloads index, every plugin link in one place."""
         url = catalogue_mod.DOWNLOADS_URL
         opened = QDesktopServices.openUrl(QUrl(url))
         self.download_log.appendPlainText(
             f"opened the full downloads list: {url}" if opened
-            else f"could not open a browser — the link is: {url}"
+            else f"could not open a browser. The link is: {url}"
         )
 
     def download_selected_plugin(self, release=None) -> None:
-        """Open the vendor's page for a plugin — in the user's own browser.
+        """Open the vendor's page for a plugin, in the user's own browser.
 
         `release` is passed by the context menu; the button connection goes through a lambda
         because Qt hands a `clicked` slot a `checked` bool, which this used to accept as the
-        release and then crash on (`'bool' object has no attribute 'windows'` — an observed traceback,
+        release and then crash on (`'bool' object has no attribute 'windows'`, an observed traceback,
         2026-09-26). The isinstance guard is the belt to that lambda's braces.
         
 
         Saying so when there is no selection matters: this used to return silently, which is
         indistinguishable from a broken button (reported as *"it either does nothing or opens
-        it"* — the four-second table rebuild was clearing the selection underneath the click).
+        it"*, the four-second table rebuild was clearing the selection underneath the click).
         """
         if release is None or isinstance(release, bool):
             release, _ = self._selected_release()
@@ -1822,7 +1822,7 @@ class MainWindow(QMainWindow):
         opened = QDesktopServices.openUrl(QUrl(url))
         self.download_log.appendPlainText(
             f"opened {release.product} in your browser: {url}" if opened
-            else f"could not open a browser — the link is: {url}"
+            else f"could not open a browser. The link is: {url}"
         )
         if release.needs_sign_in:
             self.download_log.appendPlainText(
@@ -1855,7 +1855,7 @@ class MainWindow(QMainWindow):
         self.pending_table.setHorizontalHeaderLabels(["Status", "Product", "Version", "Kind", "File"])
         _fit_columns(self.pending_table, stretch={4: 300}, contents=(0, 1, 2, 3), elide={4: True})
         self.pending_empty = _empty_note(
-            "No installers waiting — press 'Find downloaded installers' to look in ~/Downloads "
+            "No installers waiting: press 'Find downloaded installers' to look in ~/Downloads "
             "and the prefix root for .msi / .exe files."
         )
         layout.addWidget(self.pending_empty, 2)
@@ -1864,7 +1864,7 @@ class MainWindow(QMainWindow):
         self.pending_table.itemSelectionChanged.connect(self._pending_selection_changed)
         layout.addWidget(self.pending_table, 3)
 
-        self.pending_log = _log_pane("Nothing scanned yet — press 'Find downloaded installers'. Output appears here.", 1000)
+        self.pending_log = _log_pane("Nothing scanned yet: press 'Find downloaded installers'. Output appears here.", 1000)
         layout.addWidget(self.pending_log, 1)
         return page
 
@@ -1930,7 +1930,7 @@ class MainWindow(QMainWindow):
             self,
             "Install plugin",
             f"Install {installer.product} from {installer.path.name}?\n\n"
-            "If that is the vendor's .exe, its MSI is extracted first — and if the wrapper has to be "
+            "If that is the vendor's .exe, its MSI is extracted first, and if the wrapper has to be "
             "run under Wine to produce one, a vendor installer window will open and may take a few "
             "minutes. One plugin at a time.",
         )
@@ -2007,7 +2007,7 @@ class MainWindow(QMainWindow):
 
         self.scan_table = QTableWidget(0, 2)
         self.scan_empty = _empty_note(
-            "Nothing scanned yet — 'Scan prefix for broken installs' lists every plugin path the "
+            "Nothing scanned yet: 'Scan prefix for broken installs' lists every plugin path the "
             "registry records and whether the file is actually on disk."
         )
         layout.addWidget(self.scan_empty, 1)
@@ -2016,7 +2016,7 @@ class MainWindow(QMainWindow):
         _fit_columns(self.scan_table, stretch={1: 320}, contents=(0,), elide={1: True})
         layout.addWidget(self.scan_table, 1)
 
-        self.scan_products = _log_pane("Nothing triaged yet — 'Triage products' lists every product in every prefix here.", 500)
+        self.scan_products = _log_pane("Nothing triaged yet: 'Triage products' lists every product in every prefix here.", 500)
         layout.addWidget(self.scan_products, 1)
         return page
 

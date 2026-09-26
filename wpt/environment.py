@@ -53,7 +53,7 @@ def windows_user(drive_c: Path, override: str | None = None) -> str:
     Detected, in this order: an explicit override, the prefix's own `drive_c/users/*` (the one
     with an AppData directory), then `$USER`, then a plain "user".
 
-    This used to fall back to a hardcoded name — harmless here, wrong for everyone else and not
+    This used to fall back to a hardcoded name, harmless here, wrong for everyone else and not
     something to publish.
     """
     if override:

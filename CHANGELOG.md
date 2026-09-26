@@ -5,10 +5,20 @@ release are not listed separately - what matters is what a published version con
 
 ## 0.6.3
 
+Presentation: the repository now reads like something a newcomer can follow.
+
+- The README is reorganised: what it does, why it exists, requirements, then **Install**, then how to use
+  it. It opens with the icon and release badges instead of a paragraph.
+- New **Coming from Windows** section: moving your installers, your own presets and your licences across,
+  and an honest list of what will not work here (drivers, Linux-native plugins).
+- A **troubleshooting** table for the failures people actually hit, and the install instructions no longer
+  assume you already build Arch packages.
+- Em dashes are gone from the docs and from the interface text.
+
 GUI pass: the workflow is now left-to-right, and the tabs say what they do.
 
 - **Tab order and names**: Environment · Plugins · **Download** · **Pending Install** · **Install MSI** ·
-  Diagnostics. Downloading and installing are two steps, so they are two tabs — *Install downloaded
+  Diagnostics. Downloading and installing are two steps, so they are two tabs. *Install downloaded
   installer* and the *watch ~/Downloads* switch are gone from the browse tab, and every install now
   goes through Pending Install. (The change-detected refresh stayed: it no longer needs a switch.)
 - ***Open in browser* sits next to the dropdown it acts on** in the *Preset & IR sources* row, instead
@@ -18,12 +28,12 @@ GUI pass: the workflow is now left-to-right, and the tabs say what they do.
 - **Columns keep a minimum width**, so a table with no rows no longer collapses Status to 40 px and
   Kind to 35 px.
 - **The five "What to install" checkboxes are grouped**, not spread across the whole window.
-- **Dark mode is a header switch** (and a line in Settings). Off by default — the window follows your
+- **Dark mode is a header switch** (and a line in Settings). Off by default, the window follows your
   desktop theme, which is what makes it look native; the switch is for the other case, and it applies
   immediately without a restart. The choice is remembered in `~/.config/wpt/config.json`.
 - **Settings & about** opens a dialog with the version, every path the toolkit resolved and the config
-  file — what a bug report needs. The update-check toggle lives there too.
-- **The uninstall confirmation no longer reads the MSI on the GUI thread** — the last of the two
+  file, what a bug report needs. The update-check toggle lives there too.
+- **The uninstall confirmation no longer reads the MSI on the GUI thread**, the last of the two
   accepted limitations from the review round. The dialog says the same thing; the window cannot freeze
   on the way to it.
 - `tests/render_tabs.py` renders any tab at any size, reads the tab labels from the window (a
@@ -44,7 +54,7 @@ GUI pass: the workflow is now left-to-right, and the tabs say what they do.
 - Fixes the updater's checksum check: a release that publishes a checksum for one asset (its source
   tarball) had that checksum used to "verify" a different asset, which failed a good download and
   made `wpt update --install` refuse to install it. A sums file that names files is now read as
-  such — the line for *this* asset, or no published checksum at all.
+  such, the line for *this* asset, or no published checksum at all.
 - Every release attaches a checksum per asset, so the updater can verify the package it installs.
 
 ## 0.6.0 - first public release
@@ -67,23 +77,23 @@ GUI pass: the workflow is now left-to-right, and the tabs say what they do.
 
 ## 0.5.8
 
-- **`wpt doctor`** — one command that checks everything the toolkit depends on (Wine stack, the
+- **`wpt doctor`**, one command that checks everything the toolkit depends on (Wine stack, the
   required and optional external tools, plugin directories and their permissions, cached MSIs,
   the inventory, wrapper support, the scratch dir, PySide6) and says what to fix. `--json` for
   issue reports. Exit code 2 for a real problem, 1 for warnings, 0 for clean.
-- **Shell completions** — `wpt completions fish|bash|zsh`, generated from the argument parser so
+- **Shell completions**, `wpt completions fish|bash|zsh`, generated from the argument parser so
   they cannot go stale. The Arch package installs them.
 - `wpt enable X` on an already-enabled plugin now says so and exits 0 instead of looking like a
   failure; a name that matches nothing still exits non-zero.
 - Uninstalling a product whose MSI lives in Wine's installer cache reads the MSI **before**
   running msiexec (which deletes that cached copy), and stages the MSI together with its sidecar
-  cabinets — without them the payload cannot be extracted at all.
+  cabinets, without them the payload cannot be extracted at all.
 
 ## 0.5.6
 
 - GUI: the Download Plugins and Plugins tables both have a right-click menu (open page, install
   what is already downloaded, preset sources, copy name/path/link, show in file manager).
-- The download list only redraws when `~/Downloads` changes, and keeps your selected row — a
+- The download list only redraws when `~/Downloads` changes, and keeps your selected row, a
   four-second rebuild used to clear the selection mid-click.
 - Matching a catalogue entry to a downloaded installer is strict: Quad Cortex is no longer
   offered the Nano Cortex installer.
@@ -93,10 +103,10 @@ GUI pass: the workflow is now left-to-right, and the tabs say what they do.
 
 - `wpt wrappers` identifies vendor `.exe` installers by family (NSIS, Inno Setup, InstallShield,
   WiX Burn, 7-Zip SFX, IExpress/CAB, Advanced Installer) and unpacks them on Linux where that is
-  possible — Burn bundles and self-extractors included, found by content rather than by file name.
+  possible. Burn bundles and self-extractors included, found by content rather than by file name.
 - Packages that are drivers or applications rather than plugins are refused with an explanation
   and the destination their files wanted; `--include-app-files` places them anyway.
-- Preset and IR sources (`wpt presets --sources`) — community repositories, forum preset threads,
+- Preset and IR sources (`wpt presets --sources`), community repositories, forum preset threads,
   a free vault and two shops, opened in your own browser.
 
 ## 0.5.0

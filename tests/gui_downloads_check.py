@@ -2,11 +2,11 @@
 
 Three behaviours, each named after what was observed:
 
-1. *"is there a auto refresh on the list about 5 seconds?"* — yes there was, every four seconds,
+1. *"is there a auto refresh on the list about 5 seconds?"*, yes there was, every four seconds,
    and it rebuilt every row. The tick must now do nothing unless the files in ~/Downloads change.
-2. *"when clicking on an entry the highlight disappears at times"* — the rebuild cleared the
+2. *"when clicking on an entry the highlight disappears at times"*, the rebuild cleared the
    selection. A refresh must put it back.
-3. *"choosing open download page it either does nothing or opens it (result changes randomly?)"* —
+3. *"choosing open download page it either does nothing or opens it (result changes randomly?)"*. 
    the button acted on a selection that the rebuild had just cleared, and returned silently when
    there was none.
 

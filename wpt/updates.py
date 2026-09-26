@@ -240,7 +240,7 @@ def expected_sha256(release: Release, asset: Asset, dest_dir: Path) -> str | Non
     """The published checksum for an asset, or None when the release does not publish one.
 
     Handles both a bare hash file and the `sha256sum` format, where the line for this file is
-    identified by its name — a shared sums file must not hand back another file's hash.
+    identified by its name, a shared sums file must not hand back another file's hash.
     """
     published = release.checksum_for(asset)
     if not published:

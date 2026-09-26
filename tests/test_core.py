@@ -311,7 +311,7 @@ check("and it is not mistaken for a cabinet either",
       wrappers_mod.is_cab_file(_liar / "not-really.msi"), False)
 
 # Real case: a Neural DSP MSI carrying no "Windows Installer" string at all. msitools is
-# then the judge — and only the magic bytes can be the fallback when it is not installed.
+# then the judge, and only the magic bytes can be the fallback when it is not installed.
 _ole_no_marker = Path(_tempfile.mkdtemp())
 (_ole_no_marker / "nameless-member").write_bytes(wrappers_mod.MSI_MAGIC + b"\x00" * 12288)
 _verdict = wrappers_mod.is_msi_file(_ole_no_marker / "nameless-member")
@@ -675,7 +675,7 @@ check("kinds are from the known set",
       {s.kind for s in sources_mod.SOURCES} <= {"community", "forum", "vault", "shop"}, True)
 check("every source explains what it is for", all(len(s.note) > 30 for s in sources_mod.SOURCES), True)
 check("lookup by exact name", sources_mod.find("Preset Junkie").name, "Preset Junkie")
-check("lookup by fragment", sources_mod.find("forum").name, "Neural DSP forum — preset threads")
+check("lookup by fragment", sources_mod.find("forum").name, "Neural DSP forum, preset threads")
 check("an ambiguous or unknown name finds nothing", sources_mod.find("preset sources"), None)
 
 _forum = sources_mod.find("forum")

@@ -130,7 +130,7 @@ PLUGIN_KEYS = {"VST3DIR", "VSTDIR", "VST2DIR", "AAXDIR"}
 
 
 def places_a_plugin(plan: Plan) -> bool:
-    """True when the plan places a VST3/VST2/AAX payload — i.e. something a DAW can scan.
+    """True when the plan places a VST3/VST2/AAX payload, i.e. something a DAW can scan.
 
     A plan that places files but no plugin payload is a driver or an application package. Saying
     so is the whole point: Neural DSP's Nano Cortex download is a USB driver (.sys/.inf/.cat) plus
@@ -182,7 +182,7 @@ def build_plan(
         if not is_plugin_package and key not in PLUGIN_KEYS and key != "PREDIR" and not include_app_files:
             # A driver or an application package: placing its files by hand is not a favour.
             # A driver needs its INF and service registration, which only its own installer
-            # performs — files dropped in the wrong place are worse than files left alone.
+            # performs: files dropped in the wrong place are worse than files left alone.
             # (Neural DSP's Nano Cortex download is exactly this: a USB driver + control panel.)
             plan.skipped_app.append((name, dest))
             plan.warnings.append(
@@ -346,7 +346,7 @@ def filter_needing_repair(plan: Plan) -> Plan:
             continue
         # A directory destination is a bundle (.vst3/.aaxplugin): its own mtime says nothing, so the
         # size has to be measured the same way verification measures it. Skipping these meant a broken
-        # bundle was reported as intact while verify_plan flagged it — the filter and the verifier
+        # bundle was reported as intact while verify_plan flagged it, the filter and the verifier
         # have to agree, so both go through _measured_size.
         if _measured_size(destination, destination.name) != expected_size:
             repaired.actions.append(action)
@@ -642,7 +642,7 @@ def product_leftovers(env: Environment, product: str, vendor: str = "Neural DSP"
 
     This is the dead end a real uninstall can reach: `msiexec /x` removes Windows Installer's
     cached copy of the package, and if that was the only copy (anything installed by running its
-    vendor wrapper) there is nothing left to derive a File table from — so the toolkit cannot
+    vendor wrapper) there is nothing left to derive a File table from, so the toolkit cannot
     say what belongs to the product any more. It can still *show* what is there, which is what
     this does: the vendor's ProgramData folder, any impulse-response folder of the same name,
     and files in the plugin directories whose names match. Reporting it is honest; deleting by

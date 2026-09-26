@@ -1,4 +1,4 @@
-"""Where to get more presets, IRs and tones — the community side of this toolkit.
+"""Where to get more presets, IRs and tones: the community side of this toolkit.
 
 This tool installs and repairs the plugins; it deliberately does **not** download presets from
 these sites, because it cannot: several need a sign-in, one sits behind a bot filter, and a
@@ -6,7 +6,7 @@ shop needs a purchase. What it can do honestly is take you to the right page in 
 browser, pre-filled with the plugin you are looking at, and say what you will find there.
 
 Every entry was checked by hand (2026-09-26). Only sources whose URL structure was verified
-carry a search template — inventing a `?search=` parameter that does not exist would be worse
+carry a search template, inventing a `?search=` parameter that does not exist would be worse
 than sending you to the front page.
 """
 
@@ -42,13 +42,13 @@ SOURCES: tuple[Source, ...] = (
         url="https://presetjunkie.com/",
         kind="community",
         note=(
-            "Community repository of Neural DSP presets — free, no subscription, thousands of "
+            "Community repository of Neural DSP presets: free, no subscription, thousands of "
             "presets across the whole Archetype/Fortin range. Your browser is where you sign in"
         ),
         sign_in=True,
     ),
     Source(
-        name="Neural DSP forum — preset threads",
+        name="Neural DSP forum, preset threads",
         url="https://unity.neuraldsp.com/c/plugins/18",
         kind="forum",
         note=(
@@ -58,7 +58,7 @@ SOURCES: tuple[Source, ...] = (
         search="https://unity.neuraldsp.com/search?q={q}+presets",
     ),
     Source(
-        name="Honest Amp Sims — Preset Vault",
+        name="Honest Amp Sims, Preset Vault",
         url="https://honestampsimreviews.com/preset-vault/",
         kind="vault",
         note=(
@@ -67,19 +67,19 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
-        name="r/NeuralDSP — presets thread",
+        name="r/NeuralDSP, presets thread",
         url="https://www.reddit.com/r/NeuralDSP/comments/p86qh2/presets_thread/",
         kind="community",
         note="The subreddit's standing preset-sharing thread, plus links to Dropbox and Discord dumps",
     ),
     Source(
-        name="Develop Device — NDSP packs",
+        name="Develop Device, NDSP packs",
         url="https://developdevice.com/collections/neural-dsp-presets-and-irs",
         kind="shop",
         note="Paid expansion packs and cabinet IRs per plugin (Gojira, Nameless, Nolly, Petrucci)",
     ),
     Source(
-        name="Komposition 101 — NDSP packs",
+        name="Komposition 101, NDSP packs",
         url="https://www.komposition101.com/ndsp-presets",
         kind="shop",
         note="Paid NDSP preset packs, sold individually or as a bundle",
