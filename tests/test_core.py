@@ -859,6 +859,115 @@ try:
 finally:
     _sp.run = _real_run
 
+print("nothing is ever written or deleted outside the prefix")
+# The one rule that matters for a tool that installs and removes things: every path it touches is
+# inside the prefix it was given. A prefix can be anywhere (that is the point of --prefix), so the
+# rule is containment in *the prefix it is using*, not a fixed home directory.
+_conf_root = Path(_tempfile.mkdtemp())
+_conf_prefix = _conf_root / "wine-ableton"
+(_conf_prefix / "drive_c" / "Program Files").mkdir(parents=True)
+_canary_dir = _conf_root / "canary"
+_canary_dir.mkdir()
+_canary = _canary_dir / "important.txt"
+_canary.write_text("must not be touched")
+_conf_env = type("E", (), {
+    "drive_c": _conf_prefix / "drive_c",
+    "prefix": _conf_prefix,
+    "vst3_dir": _conf_prefix / "drive_c/Program Files/Common Files/VST3",
+    "vst2_dir": _conf_prefix / "drive_c/Program Files/VstPlugins",
+    "aax_dir": _conf_prefix / "drive_c/Program Files/Common Files/Avid/Audio/Plug-Ins",
+    "program_data": _conf_prefix / "drive_c/ProgramData",
+    "program_files": _conf_prefix / "drive_c/Program Files",
+})()
+
+check("an in-prefix path is recognised",
+      _installer.inside_prefix(_conf_env.vst3_dir / "Thing.vst3", _conf_env), True)
+check("a sibling of the prefix is not",
+      _installer.inside_prefix(_canary_dir / "x.vst3", _conf_env), False)
+check("and neither is a traversal that starts inside",
+      _installer.inside_prefix(_conf_env.drive_c / ".." / ".." / "canary" / "x", _conf_env), False)
+
+# a declared MSI target is data out of an installer, not a trusted path
+for hostile in (r"C:\..\..\..\canary", r"C:\Program Files\..\..\..\canary",
+                r"C:\Windows\..\..\..\elsewhere"):
+    got = _installer._destination_for("VST3DIR",
+                                     type("I", (), {"properties": {"VST3DIR": hostile},
+                                                    "manufacturer": "V", "product_name": "P"})(),
+                                     _conf_env)
+    check(f"a declared target escaping the prefix is refused ({hostile})", got, None)
+_normal = _installer._destination_for(
+    "VST3DIR",
+    type("I", (), {"properties": {"VST3DIR": r"C:\Program Files\Common Files\VST3"},
+                   "manufacturer": "V", "product_name": "P"})(),
+    _conf_env)
+check("a declared target inside the prefix still resolves",
+      (_installer.inside_prefix(_normal, _conf_env), _normal.name), (True, "VST3"))
+
+# the writing function checks for itself and keeps its hands off anything outside
+_plant = _installer.Plan(msi=Path("/tmp/x.msi"), identity=None, expected={})
+_plant.actions.append(_installer.Action(source=Path("/tmp/nothing"), dest=_canary_dir / "planted.vst3",
+                                        label="VST3DIR"))
+_rows = _installer.apply_plan(_plant, _conf_env, dry_run=False)
+check("writing outside the prefix is refused", _rows[0][0], "refused")
+check("and nothing was created", sorted(p.name for p in _canary_dir.iterdir()), ["important.txt"])
+check("removal refuses the same path", [r[0] for r in _installer.remove_files(_plant, _conf_env)],
+      ["refused"])
+check("the canary is untouched", _canary.read_text(), "must not be touched")
+check("without a prefix a real run refuses rather than guesses",
+      _installer.apply_plan(_plant, None, dry_run=False)[0][0], "refused")
+
+# and a normal in-prefix install still works
+_good_src = _conf_root / "payload.vst3"
+_good_src.write_bytes(b"payload")
+_good = _installer.Plan(msi=Path("/tmp/x.msi"), identity=None, expected={})
+_good_dest = _conf_env.vst3_dir / "Thing.vst3"
+_good.actions.append(_installer.Action(source=_good_src, dest=_good_dest, label="VST3DIR"))
+check("an in-prefix install is not affected",
+      [r[0] for r in _installer.apply_plan(_good, _conf_env, dry_run=False)], ["copied"])
+check("and the file is there", (_good_dest.exists(), _good_dest.read_bytes()), (True, b"payload"))
+check("removing it works too",
+      [r[0] for r in _installer.remove_files(_good, _conf_env)], ["removed"])
+check("and the empty vendor folder it left is pruned, not the roots",
+      (_good_dest.exists(), _conf_env.vst3_dir.exists(), _conf_prefix.exists()), (False, True, True))
+check("_prune_empty_parents refuses to climb above the prefix",
+      _installer._prune_empty_parents(_canary_dir, _conf_env), 0)
+
+# a registry value is data too: it can be spelled inside the prefix and point outside it
+from wpt import products as _products  # noqa: E402
+check("a registry path escaping the prefix is ignored",
+      _products.to_path(_conf_env.drive_c, "C:\\..\\..\\canary"), None)
+check("a normal registry path is still mapped",
+      _products.to_path(_conf_env.drive_c, "C:\\Program Files\\X").name, "X")
+
+# enable/disable renames a user's file: it obeys the same rule
+_rename_rows = _installer.set_enabled(
+    type("E", (), {"drive_c": _conf_env.drive_c, "vst3_dir": _canary_dir,
+                   "vst2_dir": _conf_root / "nope"})(), "important", enabled=False)
+check("renaming outside the prefix is refused", _rename_rows[0][0], "refused")
+check("and the file keeps its name", _canary.name, "important.txt")
+
+# the wrapper unpacker's only recursive delete must stay in its own workdir
+_wrapper_workdir = _conf_root / "wpt-extract-unpack"
+_wrapper_workdir.mkdir()
+_wrapper_target = _canary_dir / "not-a-workdir"          # a directory outside that workdir
+_wrapper_target.mkdir()
+(_wrapper_target / "keepme").write_text("x")
+code, detail = wrappers_mod._run_tool("7z", Path("/tmp/whatever"), _wrapper_target,
+                                      workdir=_wrapper_workdir)
+check("the unpacker refuses to clear anything outside its workdir",
+      (code, "refusing to clear" in detail), (1, True))
+check("and that directory is untouched", (_wrapper_target / "keepme").exists(), True)
+# a target inside the workdir is still cleared, which is the whole point of the call
+_inside = _wrapper_workdir / "inner-cab"
+_inside.mkdir()
+(_inside / "stale").write_text("x")
+wrappers_mod._run_tool("true", Path("/tmp/whatever"), _inside, workdir=_wrapper_workdir)
+check("a target inside the workdir has its stale contents cleared, as before",
+      (_inside / "stale").exists(), False)
+
+import shutil as _sh7  # noqa: E402
+_sh7.rmtree(_conf_root, ignore_errors=True)
+
 print("repair agrees with verification")
 # A bundle (.vst3 directory) whose inner binary is the wrong size was flagged by verify_plan but
 # skipped by filter_needing_repair, so `wpt repair` said "nothing to do: every file the MSI
@@ -881,11 +990,13 @@ check("a missing destination is still queued", len(_installer.filter_needing_rep
 
 print("enable/disable refuses to overwrite")
 _toggle_root = Path(_tempfile.mkdtemp())
-(_toggle_root / "plugins").mkdir()
-_real = _toggle_root / "plugins" / "Thing.vst3"
+_toggle_drive_c = _toggle_root / "prefix" / "drive_c"
+(_toggle_drive_c / "plugins").mkdir(parents=True)
+_real = _toggle_drive_c / "plugins" / "Thing.vst3"
 _real.write_bytes(b"enabled")
 _real.with_name("Thing.vst3" + _installer.DISABLED_SUFFIX).write_bytes(b"disabled twin")
-_toggle_env = type("E", (), {"vst3_dir": _toggle_root / "plugins", "vst2_dir": _toggle_root / "nothing"})()
+_toggle_env = type("E", (), {"drive_c": _toggle_drive_c, "vst3_dir": _toggle_drive_c / "plugins",
+                             "vst2_dir": _toggle_drive_c / "nothing"})()
 rows = _installer.set_enabled(_toggle_env, "Thing", enabled=True)
 check("a rename that would clobber a file is refused", rows[0][0], "kept")
 check("and both files are still there", (_real.exists(), _real.with_name("Thing.vst3" + _installer.DISABLED_SUFFIX).exists()),

@@ -221,7 +221,16 @@ def _to_path(drive_c: Path, value: str) -> Path | None:
     rel = decoded[3:].replace("\\", "/").rstrip("/")
     if not rel:
         return None
-    return drive_c / rel
+    candidate = drive_c / rel
+    # A registry value is data, and `C:\..\..\..\etc` is spellable: resolve before believing it
+    # means something inside the prefix. (Windows itself normalises the path, so a value that only
+    # looks local is not one.)
+    try:
+        if not candidate.resolve().is_relative_to(Path(drive_c).resolve()):
+            return None
+    except OSError:
+        return None
+    return candidate
 
 
 PLUGIN_DIR_MARKERS = ("VST3", "VSTPLUGINS", "PLUG-INS", "AAXPLUGIN", "NEURAL DSP", "ILOK", "PACE")

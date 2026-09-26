@@ -46,6 +46,22 @@ class Plan:
         return total
 
 
+def inside_prefix(path: Path, env: Environment) -> bool:
+    """Whether a path really is inside this prefix.
+
+    Everything this tool writes or deletes must be. The check is deliberately made through
+    `resolve()`: a path can be spelled inside the prefix and still point outside it
+    (`<prefix>/drive_c/../../../etc`), and the whole point is to catch that.
+    """
+    drive_c = getattr(env, "drive_c", None)
+    if drive_c is None:
+        return False          # without a prefix there is nothing to be inside of: refuse
+    try:
+        return Path(path).resolve().is_relative_to(Path(drive_c).resolve())
+    except OSError:
+        return False
+
+
 def _destination_for(
     dirname: str, identity: msi_mod.MsiIdentity, env: Environment, children: list[Path] | None = None
 ) -> Path | None:
@@ -59,10 +75,16 @@ def _destination_for(
     key = dirname.split(":")[0].strip().upper()
 
     # 1. trust the MSI's own declared target, e.g. VST3DIR = C:\Program Files\Common Files\VST3
+    #    -- but only as far as the prefix. A declared path is data out of an installer, and
+    #    `C:\..\..\..\home\you` resolves outside the prefix; placing (or later deleting) there
+    #    is not something this tool does unasked.
     declared = identity.properties.get(key, "")
     if declared.upper().startswith("C:\\"):
         rel = declared[3:].replace("\\", "/").rstrip("/")
-        return env.drive_c / rel
+        candidate = env.drive_c / rel
+        if not inside_prefix(candidate, env):
+            return None
+        return candidate
 
     # 2. fall back to the standard locations for this stack
     vendor = identity.manufacturer or "Vendor"
@@ -191,10 +213,28 @@ def build_plan(
     return plan
 
 
-def apply_plan(plan: Plan, dry_run: bool = False) -> list[tuple[str, str, str]]:
-    """Execute a plan. Returns (status, path, note) rows; nothing is silent."""
+def apply_plan(
+    plan: Plan, env: Environment | None = None, dry_run: bool = False
+) -> list[tuple[str, str, str]]:
+    """Execute a plan. Returns (status, path, note) rows; nothing is silent.
+
+    `env` is what makes the containment check possible: everything written must land inside the
+    prefix. Passing no env is only allowed for a dry run, which writes nothing - a real run without
+    it refuses every action rather than guessing.
+    """
     results: list[tuple[str, str, str]] = []
     for action in plan.actions:
+        # Second line of defence: a plan should already contain only in-prefix destinations, but
+        # this is the function that writes files, so it checks for itself rather than trusting
+        # whoever built the plan (an older version, a hand-edited plan, a future caller).
+        if env is None:
+            if not dry_run:
+                results.append(("refused", str(action.dest),
+                                "no prefix given to apply_plan - not written"))
+                continue
+        elif not inside_prefix(action.dest, env):
+            results.append(("refused", str(action.dest), "outside the prefix - not written"))
+            continue
         if dry_run:
             results.append(("dry-run", str(action.dest), action.label))
             continue
@@ -370,7 +410,7 @@ def _prune_empty_parents(parent: Path, env: Environment) -> int:
     """Remove now-empty directories above a deleted file, never the roots themselves."""
     stops = {getattr(env, name) for name in PRUNE_STOP if hasattr(env, name)}
     removed = 0
-    while parent not in stops and parent != env.drive_c and parent.is_relative_to(env.drive_c):
+    while parent not in stops and parent != env.drive_c and inside_prefix(parent, env):
         try:
             parent.rmdir()  # fails while it still has anything in it, which is the point
         except OSError:
@@ -391,7 +431,7 @@ def remove_files(plan: Plan, env: Environment, dry_run: bool = False) -> list[tu
     rows: list[tuple[str, str, str]] = []
     removed_dirs: list[Path] = []
     for action in plan.actions:
-        if not action.dest.is_relative_to(env.drive_c):
+        if not inside_prefix(action.dest, env):
             rows.append(("refused", str(action.dest), "outside the prefix"))
             continue
         for target in _removal_targets(action):
@@ -574,6 +614,9 @@ def set_enabled(
             target = path.with_name(
                 path.name[: -len(DISABLED_SUFFIX)] if enabled else path.name + DISABLED_SUFFIX
             )
+            if not inside_prefix(target, env):
+                rows.append(("refused", str(path), "outside the prefix - not renamed"))
+                continue
             if dry_run:
                 note = f"-> {target.name}"
                 if target.exists():

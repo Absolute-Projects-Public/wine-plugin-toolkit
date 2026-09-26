@@ -34,9 +34,11 @@ Three things make route 1 usable in practice rather than theoretically:
 
 from __future__ import annotations
 
+import os
 import re
 
 import shutil
+import tempfile
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -361,7 +363,26 @@ def _command(tool: str, source: Path, target: Path) -> list[str]:
     return [tool, str(source)]
 
 
-def _run_tool(tool: str, source: Path, target: Path, timeout: int = 1800) -> tuple[int, str]:
+def _run_tool(tool: str, source: Path, target: Path, timeout: int = 1800,
+              workdir: Path | None = None) -> tuple[int, str]:
+    """Unpack with a tool into `target`.
+
+    This is the only recursive delete in the module, so it refuses to clear anything that is not
+    inside the wrapper workdir it was given (or, when no workdir is passed, anything outside the
+    temp/cache area). The check is on the *resolved* path: `..` in an argument must not aim a
+    rmtree at real data.
+    """
+    resolved = target.resolve()
+    if workdir is not None:
+        root = Path(workdir).resolve()
+        allowed = resolved != root and resolved.is_relative_to(root)
+    else:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")).resolve()
+        allowed = resolved != temp_root and (
+            resolved.is_relative_to(temp_root) or resolved.is_relative_to(cache_root))
+    if not allowed:
+        return 1, f"refusing to clear {target}: not inside the wrapper workdir"
     if target.exists():
         shutil.rmtree(target, ignore_errors=True)
     target.mkdir(parents=True, exist_ok=True)
@@ -407,7 +428,7 @@ def _harvest(directory: Path, depth: int = 0) -> Harvest:
             if not shutil.which(tool):
                 continue
             target = container.parent / f"inner-{container.name}-{tool}"
-            _run_tool(tool, container, target)
+            _run_tool(tool, container, target, workdir=workdir)
             result.nested_cabs += 1
             inner = _harvest(target, depth + 1)
             result.msis.extend(m for m in inner.msis if m not in result.msis)
@@ -536,7 +557,7 @@ def unpack_on_linux(
             result.attempts.append((tool, "not installed"))
             continue
         target = workdir / f"unpack-{tool}"
-        code, note = _run_tool(tool, wrapper, target, timeout=timeout)
+        code, note = _run_tool(tool, wrapper, target, timeout=timeout, workdir=workdir)
         harvest = _harvest(target)
         result.attempts.extend(harvest.attempts)
         if harvest.payload_dirs:

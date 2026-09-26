@@ -231,13 +231,13 @@ def cmd_install(args) -> int:
         return 1
 
     if args.dry_run:
-        results = apply_plan(plan, dry_run=True)
+        results = apply_plan(plan, env, dry_run=True)
         for status, path, note in results:
             print(f"  {status:8} {path}")
         print(f"\ndry run: {len(results)} destinations would be written. Nothing changed.")
         return 0
 
-    results = apply_plan(plan, dry_run=False)
+    results = apply_plan(plan, env, dry_run=False)
     failures = 0
     for status, path, note in results:
         if status == "failed":
@@ -518,7 +518,7 @@ def cmd_repair(args) -> int:
     for action in todo.actions:
         print(f"  {action.dest}")
 
-    results = apply_plan(todo, dry_run=args.dry_run)
+    results = apply_plan(todo, env, dry_run=args.dry_run)
     failures = 0
     for status, path, note in results:
         if status == "failed":

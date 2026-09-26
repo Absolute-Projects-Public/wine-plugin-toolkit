@@ -149,10 +149,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("missing file queued", any(a.dest.name == "Archetype Ghost X.vst3" for a in todo.actions), True)
 
     print("plan application + verification")
-    results = installer.apply_plan(todo, dry_run=True)
+    results = installer.apply_plan(todo, env, dry_run=True)
     check("dry run writes nothing", env.vst3_dir.joinpath("Archetype Ghost X.vst3").exists(), False)
     check("dry run reports both destinations", len(results), 2)
-    applied = installer.apply_plan(todo, dry_run=False)
+    applied = installer.apply_plan(todo, env, dry_run=False)
     check("repair executed", sorted(r[0] for r in applied), ["copied", "copied"])
     check("ghost file now exists", (env.vst3_dir / "Archetype Ghost X.vst3").exists(), True)
 

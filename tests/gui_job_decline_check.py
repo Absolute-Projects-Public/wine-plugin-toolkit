@@ -106,7 +106,7 @@ def recording_build_plan(msi_path, env, scratch, **options):
 
 
 gui_mod.build_plan = recording_build_plan
-gui_mod.apply_plan = lambda plan, dry_run=False, **kw: []
+gui_mod.apply_plan = lambda plan, *args, **kwargs: []   # signature-agnostic stub
 _real_spawn = window._spawn
 
 

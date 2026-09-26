@@ -853,7 +853,7 @@ class MainWindow(QMainWindow):
             todo = filter_needing_repair(plan)
             if not todo.actions:
                 return 0, 0, []
-            rows = apply_plan(todo, dry_run=False)
+            rows = apply_plan(todo, self.env, dry_run=False)
             bad = [c for c in verify_plan(todo) if c[0] != "ok"]
             return len(rows), len(bad), rows
 
@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
             emit(f"extracting {msi_path.name} -> {SCRATCH}")
             msi_mod.extract(msi_path, SCRATCH)
             plan = build_plan(msi_path, self.env, SCRATCH, **options)
-            return plan, apply_plan(plan, dry_run=dry_run)
+            return plan, apply_plan(plan, self.env, dry_run=dry_run)
 
         self._spawn(
             job, msi_path, dry_run, options,
@@ -1574,7 +1574,7 @@ class MainWindow(QMainWindow):
             emit(f"MSI: {prepared.msi}")
             msi_mod.extract(prepared.msi, SCRATCH)
             plan = build_plan(prepared.msi, self.env, SCRATCH)
-            rows = apply_plan(plan, dry_run=False)
+            rows = apply_plan(plan, self.env, dry_run=False)
             bad = [c for c in verify_plan(plan) if c[0] != "ok"]
             return plan, rows, bad
 
@@ -1728,7 +1728,7 @@ class MainWindow(QMainWindow):
             emit(f"MSI: {prepared.msi}")
             msi_mod.extract(prepared.msi, SCRATCH)
             plan = build_plan(prepared.msi, self.env, SCRATCH)
-            rows = apply_plan(plan, dry_run=False)
+            rows = apply_plan(plan, self.env, dry_run=False)
             bad = [c for c in verify_plan(plan) if c[0] != "ok"]
             return plan, rows, bad
 
