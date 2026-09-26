@@ -3,6 +3,14 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## 0.6.1
+
+- Fixes the updater's checksum check: a release that publishes a checksum for one asset (its source
+  tarball) had that checksum used to "verify" a different asset, which failed a good download and
+  made `wpt update --install` refuse to install it. A sums file that names files is now read as
+  such — the line for *this* asset, or no published checksum at all.
+- Every release attaches a checksum per asset, so the updater can verify the package it installs.
+
 ## 0.6.0 - first public release
 
 - **`wpt update`** and the GUI's update check: asks GitHub for the newest release (once a day,

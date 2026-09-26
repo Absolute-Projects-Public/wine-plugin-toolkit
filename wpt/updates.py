@@ -249,10 +249,20 @@ def expected_sha256(release: Release, asset: Asset, dest_dir: Path) -> str | Non
         text = _get(published.url).decode("utf-8", "replace")
     except UpdateError:
         return None
+    # A sums file that names its files must be read as such: the line for THIS asset, or nothing.
+    # Falling back to "the first hash in the file" is how a release that publishes a checksum for
+    # its source tarball ends up being used to "verify" its package - which fails a perfectly good
+    # download and makes the updater look broken.
+    named = False
     for line in text.splitlines():
         match = re.match(r"\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$", line)
-        if match and Path(match.group(2)).name == asset.name:
+        if not match:
+            continue
+        named = True
+        if Path(match.group(2)).name == asset.name:
             return match.group(1).lower()
+    if named:
+        return None          # it lists files, and this asset is not one of them
     match = re.search(r"\b([0-9a-fA-F]{64})\b", text)
     return match.group(1).lower() if match else None
 

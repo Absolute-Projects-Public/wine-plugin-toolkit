@@ -34,7 +34,7 @@ else
 fi
 
 echo
-echo "==> checksum file for the release"
+echo "==> checksum files for the release (one per asset)"
 ( cd dist && sha256sum "wpt-$VERSION.tar.gz" > "wpt-$VERSION.tar.gz.sha256" )
 cat "dist/wpt-$VERSION.tar.gz.sha256"
 
@@ -44,12 +44,17 @@ echo "      bash packaging/build-local.sh"
 
 cat <<EOF
 
+==> also write the package's checksum (the updater verifies against it):
+      ( cd ~/wpt-pkg && sha256sum "wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst" \
+            > "wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst.sha256" )
+
 ==> publish
   1. git add -A && git commit
   2. git tag -a v$VERSION -m "wpt $VERSION" && git push origin main --tags
   3. create the GitHub release for v$VERSION and attach:
        $TARBALL                     (source)
        dist/wpt-$VERSION.tar.gz.sha256
+       wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst.sha256
        wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst   (what 'wpt update' installs)
   4. verify with a machine that has an older wpt installed:
        wpt update

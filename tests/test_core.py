@@ -1100,6 +1100,19 @@ _bare_release = updates_mod.Release(tag="v1", version=(1,), html_url="", assets=
 check("a bare hash file also works",
       updates_mod.expected_sha256(_bare_release, _bare_release.assets[0], _tempfile.mkdtemp()),
       "c" * 64)
+# the live release that exposed this: a sums file for the tarball only, and a package to check
+_mixed = Path(_tempfile.mkdtemp()) / "wpt-99.0.0.tar.gz.sha256"
+_mixed.write_text("a" * 64 + "  wpt-99.0.0.tar.gz\n")
+_mixed_release = updates_mod.Release(tag="v99.0.0", version=(99, 0, 0), html_url="", assets=[
+    updates_mod.Asset("wine-plugin-toolkit-99.0.0-1-any.pkg.tar.zst", "u", 1),
+    updates_mod.Asset("wpt-99.0.0.tar.gz", "u", 2),
+    updates_mod.Asset("wpt-99.0.0.tar.gz.sha256", _mixed.as_uri()),
+])
+check("a sums file naming only the tarball yields the tarball's hash",
+      updates_mod.expected_sha256(_mixed_release, _mixed_release.assets[1], _tempfile.mkdtemp()),
+      "a" * 64)
+check("and no hash at all for the package it does not name",
+      updates_mod.expected_sha256(_mixed_release, _mixed_release.assets[0], _tempfile.mkdtemp()), None)
 check("no checksum asset means no expected hash",
       updates_mod.expected_sha256(updates_mod.Release(tag="v1", version=(1,), html_url=""),
                                   updates_mod.Asset("pkg.tar.zst", "u"), _tempfile.mkdtemp()), None)
