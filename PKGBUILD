@@ -52,6 +52,14 @@ package() {
     install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt" "$pkgdir/usr/bin/wpt"
     install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt-gui" "$pkgdir/usr/bin/wpt-gui"
 
+    # the launcher entry and its icon: without these, wpt-gui has no menu entry and no icon
+    install -Dm644 "$srcdir/$pkgname-$pkgver/packaging/wpt-gui.desktop" \
+        "$pkgdir/usr/share/applications/wpt-gui.desktop"
+    for size in 16 32 48 64 128 256 512; do
+        install -Dm644 "$srcdir/$pkgname-$pkgver/wpt/data/icons/wpt-$size.png" \
+            "$pkgdir/usr/share/icons/hicolor/${size}x${size}/apps/wpt-gui.png"
+    done
+
     install -Dm644 "$srcdir/$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 "$srcdir/$pkgname-$pkgver/CHANGELOG.md" "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
 

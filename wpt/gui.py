@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QThread, QTimer, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QPalette
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -105,6 +105,22 @@ def _log_pane(placeholder: str, blocks: int = 1000) -> QPlainTextEdit:
     pane.setMaximumBlockCount(blocks)
     pane.setPlaceholderText(placeholder)
     return pane
+
+
+def app_icon() -> QIcon:
+    """The window and taskbar icon, from `wpt/data/wpt.png` inside the package.
+
+    Shipped in the Python package rather than only as a theme icon so a source run
+    (`python3 -m wpt.gui`) carries it too; the Arch package also installs the hicolor sizes and a
+    .desktop entry, which is what a launcher reads.
+    """
+    folder = Path(__file__).resolve().parent / "data" / "icons"
+    icon = QIcon()
+    for size in (16, 32, 48, 64, 128, 256, 512):
+        path = folder / f"wpt-{size}.png"
+        if path.exists():
+            icon.addFile(str(path))
+    return icon
 
 
 def _dark_palette() -> QPalette:
@@ -199,6 +215,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Wine Plugin Toolkit")
+        self.setWindowIcon(app_icon())
         self.resize(980, 700)
         self.env = None
         self.plan = None
@@ -800,6 +817,12 @@ class MainWindow(QMainWindow):
         self.plugin_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.plugin_table.customContextMenuRequested.connect(self._plugin_context_menu)
         layout.addWidget(self.plugin_table, 2)
+        self.plugin_empty = _empty_note(
+            "No inventory yet — press 'Refresh inventory' to list every plugin file in the prefix "
+            "and check each one's size against its cache MSI."
+        )
+        layout.addWidget(self.plugin_empty, 2)
+        _show_rows(self.plugin_table, self.plugin_empty, 0)
 
         self.plugin_log = _log_pane("Job output appears here — inventory, repairs, uninstalls and rescans from this tab.", 1000)
         layout.addWidget(self.plugin_log, 1)
@@ -825,6 +848,7 @@ class MainWindow(QMainWindow):
         self.plugin_table.setRowCount(0)
         show_all = getattr(self, "cb_all_exes", None) is not None and self.cb_all_exes.isChecked()
         rows_source = inv.entries if show_all else inv.plugins
+        _show_rows(self.plugin_table, self.plugin_empty, len(rows_source))
         for entry in rows_source:
             row = self.plugin_table.rowCount()
             self.plugin_table.insertRow(row)
@@ -2056,6 +2080,10 @@ class MainWindow(QMainWindow):
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Wine Plugin Toolkit")
+    # Wayland matches a window to its launcher by this name; without it the taskbar shows a
+    # generic python icon instead of the toolkit's own
+    app.setDesktopFileName("wpt-gui")
+    app.setWindowIcon(app_icon())
     window = MainWindow()
     window.show()
     return app.exec()

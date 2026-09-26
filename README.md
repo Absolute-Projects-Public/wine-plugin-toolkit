@@ -1,6 +1,8 @@
+<img src="docs/icon.png" width="96" align="right" alt="Absolute">
+
 # Wine Plugin Toolkit (`wpt`)
 
-**Status: 0.6.0 — early, and honest about it.** It is developed against one real
+**Status: 0.6.3 — early, and honest about it.** It is developed against one real
 ableton-linux setup (Neural DSP plugins on CachyOS/Arch) and verified against real installers
 there; other prefixes and vendors are triaged read-only rather than promised. Bug reports
 welcome — `wpt doctor` (below) prints most of what is needed for one.

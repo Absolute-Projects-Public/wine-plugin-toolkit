@@ -48,6 +48,7 @@ def main() -> int:
 
     # --- 1 & 2: an empty tab explains itself, and its columns keep a floor
     for name, table, note in (
+        ("Plugins", window.plugin_table, window.plugin_empty),
         ("Pending Install", window.pending_table, window.pending_empty),
         ("Install MSI", window.install_table, window.install_empty),
         ("Diagnostics", window.scan_table, window.scan_empty),
@@ -105,6 +106,25 @@ def main() -> int:
               written, [{"dark_theme": True}, {"dark_theme": False}])
     finally:
         updates_mod.save_config = real_save
+
+    # --- the icon: in the window, in the package, and in the launcher entry
+    from wpt.gui import app_icon  # noqa: PLC0415
+
+    icon = app_icon()
+    check("the window icon loads from the package", icon.isNull(), False)
+    check("and carries the sizes an icon theme asks for",
+          sorted(s.width() for s in icon.availableSizes()), [16, 32, 48, 64, 128, 256, 512])
+    check("the window is using it", window.windowIcon().isNull(), False)
+
+    desktop = Path(__file__).resolve().parents[1] / "packaging" / "wpt-gui.desktop"
+    entry = desktop.read_text() if desktop.exists() else ""
+    check("there is a launcher entry", bool(entry), True)
+    check("it points at the launcher the package installs", "Exec=wpt-gui" in entry, True)
+    check("and at the icon the package installs", "Icon=wpt-gui" in entry, True)
+    shipped = Path(__file__).resolve().parents[1] / "wpt" / "data" / "icons"
+    check("the package carries the hicolor sizes the PKGBUILD installs",
+          sorted(int(f.name.split("-")[1].split(".")[0]) for f in shipped.glob("wpt-*.png")),
+          [16, 32, 48, 64, 128, 256, 512])
 
     # --- the settings surface exists and points at the real config file
     check("there is a settings button", window.btn_about.text(), "Settings & about")

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Wine Plugin Toolkit
+GenericName=Wine plugin manager
+Comment=Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix
+Exec=wpt-gui
+Icon=wpt-gui
+Terminal=false
+Categories=AudioVideo;AudioVideoEditing;
+Keywords=wine;vst;vst3;vst2;aax;plugin;plugin manager;ableton;neural dsp;
+StartupNotify=true
+StartupWMClass=wpt-gui
