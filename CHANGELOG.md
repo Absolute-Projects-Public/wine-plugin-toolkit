@@ -6,12 +6,25 @@ release are not listed separately - what matters is what a published version con
 ## Unreleased
 
 Stability fixes from a GUI review, each one reproduced before it was fixed and pinned in
-`tests/gui_job_failure_check.py`.
+`tests/gui_job_failure_check.py` and `tests/preset_rescue_check.py`.
 
 - **A failed uninstall pre-check now says so.** The worker that reads the MSI before the
   confirmation dialog was the one action with no failure handler, so an MSI msitools could not
   read left *Uninstall…* disabled with nothing in the log to explain it. It reports the error and
   hands the button back, like every other action.
+- **The preset rescue no longer depends on the name the MSI gives itself.** It used to look for
+  presets under the MSI's own ProductName, so a package that declared none, or declared a name
+  different from the folder its installer created, rescued nothing and then deleted the user's
+  own presets anyway. The products to look at now come from the paths the uninstall is about to
+  delete and from the vendor tree. A pack folder that is not called `*preset*` is copied too, and
+  anything preset-shaped under that product that the plan does not name (the plan is what can put
+  files back, so what it does not name is not reproducible). When nothing is found the job says so
+  in the log and names what it looked at, instead of the dialog's promise quietly not holding.
+- **Leaving while a job runs is visible, and escapable.** Closing the window hides it and waits,
+  and a quit from the menu blocked the event loop - either way there was nothing on screen and no
+  way to stop a job that can legitimately take forty minutes. Both now show a dialog that explains
+  the wait and offers *Force quit anyway…*, which asks once more and says plainly what stopping a
+  half-finished install can leave behind.
 - **The change-detected downloads scan can no longer run on the GUI thread.** When a scan was
   already in flight, `refresh_downloads(background=True)` fell through to the synchronous
   msitools scan instead of returning, freezing the window - and it does exactly that when a
@@ -23,6 +36,17 @@ Stability fixes from a GUI review, each one reproduced before it was fixed and p
 - **Enable/Disable is declined while another job holds the prefix.** The rename happens on the
   GUI thread and the uninstall path deletes both the file and its `.disabled` name, so the two
   raced over the same files. It now follows the same one-job-at-a-time rule as everything else.
+- **A disabled plugin is cleaned up when it is uninstalled.** Disable/enable renames a bundle
+  directory as readily as a plain file, but the removal only knew about the `.disabled` name for
+  files, so an uninstall of a currently-disabled plugin left the renamed copy behind - and the
+  leftovers report did not mention it either.
+- **Each staged MSI gets its own directory.** The shared staging directory let a sidecar from one
+  product overwrite a same-named one from another, and the staged copy is the one that matters
+  after `msiexec /x` has deleted the package's other copies. Re-staging an already-staged MSI
+  still returns it unchanged rather than nesting another copy.
+- **Every update-check worker is held until it stops.** `_update_worker` is replaced by the next
+  check, and dropping the last reference to a running QThread is the SIGABRT the rest of this
+  plumbing exists to avoid.
 - **Empty tables stay explained.** Blanking the plugin table for a screenshot, or clearing the
   install table for a second preview, left a large empty grid on screen where the note belongs.
 - **The preset-source note is readable and populated.** It carried an inline

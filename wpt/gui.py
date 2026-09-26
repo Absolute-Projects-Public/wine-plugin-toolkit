@@ -223,11 +223,18 @@ class MainWindow(QMainWindow):
         self.worker: Worker | None = None
         self._workers: list[Worker] = []
         self._closing = False
+        # shown while a job is still running and the user has asked to leave; modeless on purpose,
+        # because the waits below pump the event loop and it has to stay clickable
+        self._closing_dialog = None
+        self._forced = False
         # update checking owns its own workers so an update never queues behind, or blocks,
         # the prefix jobs (and vice versa)
         self._downloads_scan_running = False
         self._downloads_before: dict[str, Path] | None = None
         self._update_worker: Worker | None = None
+        # every update worker is also held here until it stops: `_update_worker` alone is replaced
+        # by the next check, and dropping the last reference to a running QThread is the SIGABRT
+        self._update_workers: list[Worker] = []
         self._update_busy = False
         self._update_release = None
         self._update_path: Path | None = None
@@ -327,6 +334,8 @@ class MainWindow(QMainWindow):
 
         worker = Worker(work)
         self._update_worker = worker
+        self._update_workers.append(worker)
+        worker.finished.connect(lambda: self._forget_update_worker(worker))
 
         def done(result):
             self._update_busy = False
@@ -434,6 +443,8 @@ class MainWindow(QMainWindow):
         self._update_busy = True
         worker = Worker(work)
         self._update_worker = worker
+        self._update_workers.append(worker)
+        worker.finished.connect(lambda: self._forget_update_worker(worker))
 
         def done(result):
             self._update_busy = False
@@ -546,9 +557,19 @@ class MainWindow(QMainWindow):
         return True
 
     def _update_job_running(self) -> bool:
-        """An update check or download is its own QThread, held separately from prefix jobs."""
-        worker = self._update_worker
-        return bool(worker is not None and worker.isRunning())
+        """An update check or download is its own QThread, held separately from prefix jobs.
+
+        Checked against the list rather than `_update_worker`: that attribute is replaced by the
+        next check, and the reference it held may still belong to a running thread.
+        """
+        return any(worker.isRunning() for worker in self._update_workers)
+
+    def _forget_update_worker(self, worker) -> None:
+        """Drop a finished update worker, the same way `_forget_worker` does for prefix jobs."""
+        try:
+            self._update_workers.remove(worker)
+        except ValueError:
+            pass
 
     def _jobs_running(self) -> bool:
         """True while any background job is alive. (Not `_busy`, which predates this and
@@ -569,9 +590,87 @@ class MainWindow(QMainWindow):
         # process down with a live QThread - which Qt answers with SIGABRT and no traceback.
         # Wait as long as the longest job can legitimately take.
         deadline = _time.time() + 2500
-        while (self._jobs_running() or self._update_job_running()) and _time.time() < deadline:
+        if self._jobs_running() or self._update_job_running():
+            # Waiting silently was a trap: the window is hidden by then, so the only thing on
+            # screen was nothing, for as long as forty minutes, with no way to stop it. The dialog
+            # explains the wait and offers the explicit way out.
+            self._finishing_dialog()
+        while ((self._jobs_running() or self._update_job_running())
+               and not self._forced and _time.time() < deadline):
+            # pumping the loop is what keeps that dialog clickable while this waits
             QApplication.processEvents()
             _time.sleep(0.05)
+
+    def _finishing_dialog(self) -> None:
+        """One visible, honest way out while a job holds the prefix.
+
+        Reached from `closeEvent` (the window is hidden and waiting) and from `_wait_for_jobs` (a
+        quit from the menu, a session logout). Both used to wait in silence.
+        """
+        if self._closing_dialog is not None:
+            return
+        box = QDialog(self)
+        box.setWindowTitle("Finishing the running job")
+        box.setModal(False)
+        layout = QVBoxLayout(box)
+        label = QLabel(
+            "A job is still running against the prefix, so the window closes itself when it "
+            "finishes.\n\nA vendor installer under Wine can legitimately take many minutes, and "
+            "stopping one part-way through a write is what damages an install."
+        )
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        force = QPushButton("Force quit anyway…")
+        force.setToolTip(
+            "Stop the job where it is and exit. The job may be part-way through writing to the\n"
+            "prefix, so the product can be left half-installed or half-removed.\n"
+            "Waiting is almost always the better choice."
+        )
+        force.clicked.connect(self._force_quit)
+        row.addWidget(force)
+        layout.addLayout(row)
+        box.show()
+        self._closing_dialog = box
+
+        # and it takes itself away the moment the prefix is free again, so a job that finishes
+        # while the window merely waited does not leave this on screen
+        timer = QTimer(box)
+        timer.setInterval(250)
+
+        def tick() -> None:
+            if not self._jobs_running() and not self._update_job_running():
+                timer.stop()
+                self._closing_dialog = None
+                box.accept()
+
+        timer.timeout.connect(tick)
+        timer.start()
+
+    def _force_quit(self) -> None:
+        """Stop the workers and leave, on the user's explicit say-so and nothing else.
+
+        `os._exit` rather than `app.quit`: the whole reason the wait exists is that Qt aborts on
+        teardown with a live QThread, which is exactly the abort this is choosing to take.
+        """
+        answer = QMessageBox.warning(
+            self,
+            "Force quit?",
+            "The running job is stopped where it is.\n\n"
+            "If it is part-way through writing to the prefix, the product can be left "
+            "half-installed or half-removed - wait if you can.\n\nQuit anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._forced = True
+        for worker in (*self._workers, self._update_worker):
+            if worker is not None and worker.isRunning():
+                worker.terminate()
+                worker.wait(3000)
+        os._exit(130)
 
     def closeEvent(self, event) -> None:  # noqa: D102 - Qt entry point
         """Never let the window close out from under a running job.
@@ -582,6 +681,11 @@ class MainWindow(QMainWindow):
         (hidden) until the job finishes, then closes itself.
         """
         if not self._jobs_running():
+            if self._closing_dialog is not None:
+                # the window is really going now, and the dialog is its child: hand it back
+                # explicitly so nothing is left pointing at a deleted widget
+                self._closing_dialog.accept()
+                self._closing_dialog = None
             super().closeEvent(event)
             return
         self._closing = True
@@ -590,6 +694,7 @@ class MainWindow(QMainWindow):
             self.plugin_log.appendPlainText("finishing the running job before closing…")
         except RuntimeError:            # widgets can already be gone during shutdown
             pass
+        self._finishing_dialog()
         event.ignore()
 
     # ------------------------------------------------------------------ theme & settings
@@ -1044,7 +1149,9 @@ class MainWindow(QMainWindow):
             )
             + f"Files: every file {msi_path.name} placed will be deleted. VST3, VST2, AAX, "
             "standalone and the factory presets it lists.\n\nYour own presets and any downloaded "
-            "packs are copied to ~/.local/share/wpt/presets/ first, so they survive either way."
+            "packs are looked for across the whole vendor folder in this prefix, not just under "
+            "this installer's own name, and copied to ~/.local/share/wpt/presets/ first. The job "
+            "says exactly what it copied, and warns if it found nothing."
             + (
                 "\n\nREGISTRY PURGE is on and will also remove the product's registry entries, so "
                 "nothing is left pointing at the deleted files.\nIt does NOT free an activation: if "
@@ -1084,12 +1191,24 @@ class MainWindow(QMainWindow):
             emit(f"msiexec exited {code}" + ("" if code == 0 else " (no registration to clear?)"))
 
             # presets first, always: the MSI's own files come back with a reinstall,
-            # the user's own and downloaded packs do not
-            saved, rescue_dir = presets_mod.rescue(self.env, plan.identity.product_name or "")
+            # the user's own and downloaded packs do not. The products to look at come from the
+            # plan's own destinations and the vendor tree, not from the MSI's ProductName - that
+            # can be absent, or differ from the folder the vendor's installer created, and either
+            # way this used to rescue nothing and then delete the user's presets anyway.
+            saved, saved_for, looked_at = presets_mod.rescue_for_plan(self.env, plan)
             if saved:
-                emit(f"presets: {len(saved)} file(s) rescued to {rescue_dir}")
+                for product, destination in saved_for:
+                    emit(f"presets: {product} -> {destination}")
+                emit(f"presets: {len(saved)} file(s) copied, nothing deleted yet")
             else:
-                emit("presets: none found for this product")
+                # Loud on purpose: this is the case where the promise in the confirmation dialog
+                # cannot be kept, and the deletion below goes ahead regardless.
+                emit("! presets: nothing found to rescue, and the files below are still being "
+                     "deleted")
+                emit("!   looked at: "
+                     + (", ".join(looked_at) if looked_at else "no product folder in this prefix"))
+                emit("!   if this product keeps your own presets here, rescue them by hand before "
+                     "removing it")
 
             rows = installer_mod.remove_files(plan, self.env)
             remaining = installer_mod.leftovers(plan, self.env)

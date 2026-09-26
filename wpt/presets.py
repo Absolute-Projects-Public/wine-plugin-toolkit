@@ -48,6 +48,33 @@ def _is_preset(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in PRESET_SUFFIXES
 
 
+def _rescue_target(env: Environment, destination: Path, source: Path) -> Path:
+    """Where one preset goes inside a rescue directory, keeping the ProgramData layout."""
+    try:
+        relative = source.relative_to(env.program_data)
+    except ValueError:
+        relative = Path(source.parent.name) / source.name
+    return destination / relative
+
+
+def _save_one(source: Path, target: Path, dry_run: bool) -> tuple[str, str, str]:
+    """Copy one preset and report it, in the four shapes `rescue` has always reported.
+
+    Shared so that the files found by `rescue_for_plan` beyond `collect()`'s set are copied and
+    reported exactly like the rest, rather than through a second implementation that can drift.
+    """
+    if dry_run:
+        return ("dry-run", str(source), f"would be copied to {target}")
+    if target.exists() and target.stat().st_size == source.stat().st_size:
+        return ("kept", str(source), "already rescued")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        return ("saved", str(source), f"-> {target}")
+    except OSError as exc:
+        return ("failed", str(source), str(exc))
+
+
 def _walk(root: Path) -> list[Path]:
     if not root.is_dir():
         return []
@@ -149,24 +176,105 @@ def rescue(
         return rows, destination
 
     for source in presets.irreplaceable:
-        try:
-            relative = source.relative_to(env.program_data)
-        except ValueError:
-            relative = Path(source.parent.name) / source.name
-        target = destination / relative
-        if dry_run:
-            rows.append(("dry-run", str(source), f"would be copied to {target}"))
-            continue
-        if target.exists() and target.stat().st_size == source.stat().st_size:
-            rows.append(("kept", str(source), "already rescued"))
-            continue
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            rows.append(("saved", str(source), f"-> {target}"))
-        except OSError as exc:
-            rows.append(("failed", str(source), str(exc)))
+        rows.append(_save_one(source, _rescue_target(env, destination, source), dry_run))
     return rows, destination
+
+
+def products_under(env: Environment, paths, vendor: str = "Neural DSP") -> list[str]:
+    """Product folder names a set of paths sits inside, under the vendor tree.
+
+    Used to work out which products an uninstall is about to touch, without trusting the name the
+    MSI gives itself. Order follows the paths, so the caller sees a stable list.
+    """
+    root = env.program_data / vendor
+    names: list[str] = []
+    for path in paths:
+        try:
+            relative = Path(path).relative_to(root)
+        except (ValueError, TypeError):
+            continue
+        if relative.parts and relative.parts[0] not in names:
+            names.append(relative.parts[0])
+    return names
+
+
+def rescue_for_plan(
+    env: Environment,
+    plan,
+    vendor: str = "Neural DSP",
+    rescue_root: Path | None = None,
+    dry_run: bool = False,
+    stamp: str | None = None,
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, Path]], list[str]]:
+    """Rescue the presets an uninstall is about to delete, whatever the MSI calls itself.
+
+    `rescue()` needs a product name, and the name is not dependable: a package can declare no
+    ProductName, or name itself differently from the folder its own installer created. Either way
+    the rescue quietly saved nothing while the uninstall went on to delete the user's presets, so
+    the dialog's promise was not kept (reproduced in the review, 2026-09-27).
+
+    The products to look at therefore come from the paths the plan is about to touch and from every
+    product folder in the vendor tree, not from the MSI. Returns (rows, [(product, destination)],
+    products_looked_at) - the third is what the caller reports when nothing was found, so "none"
+    can be told apart from "we did not look".
+    """
+    candidates: list[str] = []
+    declared = getattr(getattr(plan, "identity", None), "product_name", "") or ""
+    for name in (declared, *products_under(env, (action.dest for action in plan.actions), vendor),
+                 *product_dirs(env, vendor)):
+        cleaned = name.strip() if isinstance(name, str) else ""
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+
+    rows: list[tuple[str, str, str]] = []
+    saved_for: list[tuple[str, Path]] = []
+    named = [Path(action.dest) for action in plan.actions]
+    for product in candidates:
+        product_rows, destination = rescue(env, product, vendor, rescue_root, dry_run, stamp)
+        product_rows.extend(_unlisted_presets(env, product, vendor, named, destination, dry_run))
+        if product_rows:
+            rows.extend(product_rows)
+            saved_for.append((product, destination))
+    return rows, saved_for, candidates
+
+
+def _unlisted_presets(
+    env: Environment,
+    product: str,
+    vendor: str,
+    named: list[Path],
+    destination: Path,
+    dry_run: bool,
+) -> list[tuple[str, str, str]]:
+    """Preset files under a product's own folder that the plan does not name.
+
+    `collect()` draws its line at `User` and the `*preset*` pack folders, which is the right line
+    for what is irreplaceable - factory content comes back with a reinstall. But a downloaded pack
+    does not have to be called "*preset*" to be one: a plain `Packs` folder counted as neither a
+    product nor a pack, so its contents were never rescued while the uninstall deleted the whole
+    directory the MSI listed (reproduced in the review, 2026-09-27).
+
+    The plan is the authority on what it puts back, so anything preset-shaped here that the plan
+    does not name is not reproducible and is copied too. Only for a product the plan actually
+    touches: with none of the plan's paths under that folder there is nothing to tell a pack from
+    the factory set, and guessing would copy every product's shipped presets into the rescue.
+    """
+    root = env.program_data / vendor / product
+    if not product or not root.is_dir():
+        return []
+    resolved = [path.resolve() for path in named]
+    if not any(entry == root.resolve() or root.resolve() in entry.parents for entry in resolved):
+        return []
+    already = set(collect(env, product, vendor).irreplaceable)
+    rows: list[tuple[str, str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not _is_preset(path) or path in already:
+            continue
+        target = path.resolve()
+        if any(target == entry or entry in target.parents for entry in resolved):
+            continue
+        rows.append(_save_one(path, _rescue_target(env, destination, path), dry_run))
+    return rows
 
 
 def render(env: Environment, vendor: str = "Neural DSP", rescue_root: Path | None = None) -> str:

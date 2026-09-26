@@ -184,6 +184,7 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab 
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that dies must not leave a dead button either
+python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
 ```
 
 `tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It

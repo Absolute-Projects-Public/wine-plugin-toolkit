@@ -400,9 +400,13 @@ PRUNE_STOP = ("vst3_dir", "vst2_dir", "aax_dir", "program_files", "program_data"
 
 
 def _removal_targets(action: Action) -> list[Path]:
-    """Paths a destination could exist as: the real name, and the disabled rename."""
-    if action.source.is_dir():
-        return [action.dest]
+    """Paths a destination could exist as: the real name, and the disabled rename.
+
+    Disable/enable renames a plugin by appending `.disabled`, and that applies to a bundle
+    directory as much as to a plain file. An uninstall of a plugin that was currently disabled
+    therefore used to leave the renamed copy on disk, and `leftovers()` did not report it either
+    (found by the review, 2026-09-27): both names, both kinds.
+    """
     return [action.dest, action.dest.with_name(action.dest.name + DISABLED_SUFFIX)]
 
 

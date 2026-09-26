@@ -233,6 +233,81 @@ check("and it has no inline palette() stylesheet",
 check("the combo opens on a real source", bool(fresh.source_combo.currentData()), True)
 fresh.close()
 
+print("8. leaving while a job runs offers a visible way out, and takes it away again")
+closing = gui_mod.MainWindow()
+closing.env = ENV
+closing.show()
+app.processEvents()
+started_again: list[bool] = []
+
+
+def another_slow_job(emit):
+    started_again.append(True)
+    time.sleep(1.0)
+    return "done"
+
+
+closing._spawn(another_slow_job, log=closing.plugin_log, label="install")
+for _ in range(100):
+    app.processEvents()
+    if started_again:
+        break
+    time.sleep(0.02)
+check("the close was refused while the job ran", closing.close(), False)
+app.processEvents()
+check("a dialog explains the wait", closing._closing_dialog is not None, True)
+check("and it is on screen", closing._closing_dialog.isVisible(), True)
+buttons = [b.text() for b in closing._closing_dialog.findChildren(gui_mod.QPushButton)]
+check("with the explicit way out", any("Force quit" in text for text in buttons), True)
+drain_other = time.time() + 20
+while closing._jobs_running() and time.time() < drain_other:
+    app.processEvents()
+    time.sleep(0.02)
+for _ in range(80):
+    app.processEvents()
+    if closing._closing_dialog is None:
+        break
+    time.sleep(0.02)
+check("the dialog takes itself away once the prefix is free", closing._closing_dialog, None)
+check("and the window closed itself", closing.isVisible(), False)
+
+print("9. force quit does nothing unless it is confirmed")
+guarded = gui_mod.MainWindow()
+guarded.env = ENV
+started_third: list[bool] = []
+
+
+def third_job(emit):
+    started_third.append(True)
+    time.sleep(1.5)
+    return "done"
+
+
+guarded._spawn(third_job, log=guarded.plugin_log, label="install")
+for _ in range(100):
+    app.processEvents()
+    if started_third:
+        break
+    time.sleep(0.02)
+_real_warning = QMessageBox.warning
+QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.No)
+_real_exit = os._exit
+exited: list[int] = []
+os._exit = lambda code: exited.append(code)
+guarded._force_quit()
+QMessageBox.warning = _real_warning
+check("declining the confirmation exits nothing", exited, [])
+check("and leaves the job running", guarded._jobs_running(), True)
+
+QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+guarded._force_quit()
+QMessageBox.warning = _real_warning
+check("confirming it stops the worker and exits", exited, [130])
+check("no QThread is left running", guarded._jobs_running(), False)
+os._exit = _real_exit
+guarded.close()
+guarded._closing_dialog = None
+
 print(f"jobs still running on the way out: {window._jobs_running()}")
 window.close()
 app.processEvents()

@@ -7,6 +7,8 @@ install plugins on a prefix where the vendor's own installer refuses to run.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -296,7 +298,20 @@ def stage_msi(msi: Path, scratch: Path) -> Path:
     """
     msi = Path(msi)
     scratch = Path(scratch)
-    keep = scratch.parent / f"{scratch.name}-unpack" / "msi"
+    unpack_root = scratch.parent / f"{scratch.name}-unpack"
+    if msi.resolve().is_relative_to(unpack_root.resolve()):
+        # Already staged. The uninstall job is handed whatever copy still exists, and after
+        # `msiexec /x` that can be the staged one - re-staging it must return it unchanged rather
+        # than bury a copy one level deeper.
+        return msi
+    # One directory per staged MSI. A single shared directory let two packages collide: a sidecar
+    # of the same name from a different product overwrote the staged one whenever the sizes
+    # differed, and the staged copy is what matters here precisely because `msiexec /x` may have
+    # already deleted every other copy of the package. Keyed on the resolved path, so the same MSI
+    # reuses its directory instead of accumulating them.
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", msi.stem).strip("._")[:60] or "msi"
+    digest = hashlib.sha1(str(msi.resolve()).encode("utf-8")).hexdigest()[:8]
+    keep = unpack_root / "msi" / f"{stem}-{digest}"
     keep.mkdir(parents=True, exist_ok=True)
     target = keep / msi.name
     if not (target.exists() and target.stat().st_size == msi.stat().st_size):
