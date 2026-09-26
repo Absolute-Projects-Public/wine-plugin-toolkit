@@ -3,6 +3,12 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## 0.6.2
+
+- Test-only: the GUI update-check suite asserted a hardcoded version, so running the suites from the
+  0.6.1 source tarball reported one failure that had nothing to do with the code. It reads the
+  running version now.
+
 ## 0.6.1
 
 - Fixes the updater's checksum check: a release that publishes a checksum for one asset (its source

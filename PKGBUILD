@@ -4,7 +4,7 @@
 # -- a tarball cannot carry a hash of itself; this one, in git, pins it.
 # For a local test build of an unreleased tree, use packaging/build-local.sh instead.
 pkgname=wine-plugin-toolkit
-pkgver=0.6.1
+pkgver=0.6.2
 pkgrel=1
 pkgdesc="Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
 arch=('any')
@@ -25,7 +25,7 @@ options=('!strip')
 # The release asset, not GitHub's auto-generated tag archive: the asset is the exact tree this
 # package was built and tested from, and its hash is stable and verifiable.
 source=("wpt-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/download/v$pkgver/wpt-$pkgver.tar.gz")
-sha256sums=('97246b34ef410e0db8402c6e120e05e8c34d83e3dc770730c5c5104fb09e5fcb')
+sha256sums=('79e17d3efb810d559dd83aa9dc5e47b14d0c4a78c5663c0058f89854660b11cb')
 
 check() {
     # The core suites are stdlib-only, so they run wherever this package is built.

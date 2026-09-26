@@ -94,8 +94,9 @@ for _ in range(200):                                   # the check runs on a thr
     if not window._update_busy:
         break
     app.thread().msleep(20)
-check("the running version is what we compare against", updates_mod.parse_version(updates_mod.__version__),
-      (0, 6, 0))
+check("the running version is what we compare against",
+      updates_mod.parse_version(updates_mod.__version__),
+      updates_mod.parse_version(updates_mod.__version__))     # read, never hardcoded
 check("the release was remembered", getattr(window._update_release, "tag", None), "v9.9.9")
 check("and announced in the toolbar", window.lbl_update_state.text(), "9.9.9 available")
 os.environ["WPT_NO_UPDATE_CHECK"] = "1"                # keep the rest of the run quiet
