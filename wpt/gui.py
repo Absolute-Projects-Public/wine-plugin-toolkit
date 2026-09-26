@@ -625,6 +625,10 @@ class MainWindow(QMainWindow):
         self.download_table.setRowCount(0)
         self._fill_download_table()
         self.plugin_table.setRowCount(0)
+        # emptying the table is a state change like any other: without this the plugin table stayed
+        # visible with no rows while its note stayed hidden, which is the empty grid the note exists
+        # to replace (visible in the rendered README images)
+        _show_rows(self.plugin_table, self.plugin_empty, 0)
         self.plugin_summary.setText("No inventory yet: press 'Refresh inventory'.")
 
     def apply_theme(self, dark: bool | None = None, *, remember: bool = True) -> None:
@@ -961,6 +965,14 @@ class MainWindow(QMainWindow):
         entry = self._selected_entry()
         if not entry or not self.env:
             return
+        if self._jobs_running():
+            # The rename is a write inside the prefix, and an install or uninstall job is writing
+            # there too - the uninstall path deletes both `<name>` and `<name>.disabled`, so this
+            # races it over the same files. Same rule as _spawn: decline rather than race.
+            self.plugin_log.appendPlainText(
+                f"{'enable' if enabled else 'disable'}: still working on a job against the prefix, "
+                "try again in a moment")
+            return
         # the core matches on a substring of the file name; the base name (no
         # '.disabled') matches the file whichever state it is in
         name = entry.name
@@ -998,6 +1010,13 @@ class MainWindow(QMainWindow):
             check, msi_path,
             on_line=self.plugin_log.appendPlainText,
             on_done=lambda pair: self._confirm_uninstall(msi_path, pair[0], pair[1]),
+            # Without this the worker's exception went nowhere: `failed` had no receiver, so an
+            # unreadable MSI left the button disabled with nothing in the log to say why. Every
+            # other action passes an on_failed; this one was the exception.
+            on_failed=lambda msg: (
+                self.plugin_log.appendPlainText(f"cannot read that MSI for uninstall: {msg}"),
+                self.btn_uninstall.setEnabled(True),
+            ),
             log=self.plugin_log,
             label="uninstall check",
             restore=(self.btn_uninstall,),
@@ -1235,15 +1254,37 @@ class MainWindow(QMainWindow):
             self.msi_combo.setCurrentIndex(0)
 
     def find_msis(self) -> None:
+        """List the plugin MSIs inside the prefix, off the GUI thread.
+
+        `declares_plugin_payload` shells out to msitools once per cached MSI, so on a prefix with a
+        dozen of them this is seconds of work - the same reason the downloads scan runs on a worker
+        (see `_scan_prefix_and_downloads`). It used to run inline, on the GUI thread.
+        """
         if not self.env:
             self.log("no environment detected")
             return
-        self.msi_combo.clear()
-        found = [
+        self._spawn(
+            self._scan_prefix_msis, self.env.prefix,
+            on_line=self.log,
+            on_done=self.msis_found,
+            on_failed=lambda msg: self.log(f"could not read the prefix's MSIs: {msg}"),
+            log=self.log,
+            label="find MSIs",
+        )
+
+    def _scan_prefix_msis(self, emit, prefix) -> list:
+        """The slow half of `find_msis`. Reads only; touches no widget."""
+        emit(f"reading the cached MSIs under {prefix} …")
+        return [
             path
-            for path in msi_mod.find_extracted_msis(self.env.prefix, include_installer_cache=True)
+            for path in msi_mod.find_extracted_msis(prefix, include_installer_cache=True)
             if msi_mod.declares_plugin_payload(path)
         ]
+
+    def msis_found(self, found: list) -> None:
+        # the combo is replaced only on success: clearing it before the scan meant a failed scan
+        # threw away the MSI the user had already picked
+        self.msi_combo.clear()
         for path in found:
             self.msi_combo.addItem(str(path))
         self.log(f"{len(found)} MSI(s) found inside {self.env.prefix}")
@@ -1259,6 +1300,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No MSI", "Pick an installer MSI first.")
             return
         self.install_table.setRowCount(0)
+        # clearing the table has to put the note back, or a second Preview click leaves an empty
+        # grid on screen where the note should be (the same swap plugins_done does)
+        _show_rows(self.install_table, self.install_empty, 0)
         self._busy(True)
         msi_path = Path(self.msi_combo.currentText())
         # Read the choices HERE, on the GUI thread, and hand them to the job as plain values.
@@ -1390,7 +1434,14 @@ class MainWindow(QMainWindow):
         presets_bar.addSpacing(16)
         self.btn_source_note = QLabel("")
         self.btn_source_note.setWordWrap(True)
-        self.btn_source_note.setStyleSheet("color: palette(mid);")
+        # no stylesheet here: `palette(mid)` is a background role, so it resolves to a colour the
+        # desktop may use for a *background* - 1.25:1 on Breeze Dark - and it is resolved once, so
+        # flipping the dark switch never re-colours it either. The window text colour reads on
+        # both themes (see the note below about the same mistake in download_hint).
+        # `currentIndexChanged` is connected after the combo is filled, so the entry it opens on
+        # never fired it and this note stayed blank until the user changed the selection. Called
+        # here, not next to the connect, because the label it writes to does not exist yet there.
+        self._source_changed()
         presets_bar.addWidget(self.btn_source_note, 1)
         layout.addLayout(presets_bar)
 
@@ -1545,7 +1596,15 @@ class MainWindow(QMainWindow):
         """
         if not self.env:
             return
-        if background and not self._downloads_scan_running:
+        if background:
+            # A scan already in flight will refill the table when it lands, so a second one is not
+            # started. Returning here rather than falling through matters: without it the old
+            # `and not self._downloads_scan_running` simply failed and control reached the
+            # synchronous scan below, running msitools on the GUI thread - the freeze these workers
+            # exist to avoid. It fires whenever ~/Downloads changes mid-scan, i.e. right after a
+            # download finishes, which is when this is called.
+            if self._downloads_scan_running:
+                return
             self._downloads_scan_running = True
 
             def work(emit):

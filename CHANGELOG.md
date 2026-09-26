@@ -3,6 +3,34 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## Unreleased
+
+Stability fixes from a GUI review, each one reproduced before it was fixed and pinned in
+`tests/gui_job_failure_check.py`.
+
+- **A failed uninstall pre-check now says so.** The worker that reads the MSI before the
+  confirmation dialog was the one action with no failure handler, so an MSI msitools could not
+  read left *Uninstall…* disabled with nothing in the log to explain it. It reports the error and
+  hands the button back, like every other action.
+- **The change-detected downloads scan can no longer run on the GUI thread.** When a scan was
+  already in flight, `refresh_downloads(background=True)` fell through to the synchronous
+  msitools scan instead of returning, freezing the window - and it does exactly that when a
+  download finishes mid-scan, which is when it is called.
+- **"Find in prefix" reads the MSIs on a worker.** It runs one `msiinfo` read per cached MSI,
+  which is seconds of work on a busy prefix, and it was doing it on the GUI thread. The combo is
+  also only replaced once the scan succeeds, so a failed scan no longer discards the installer
+  you had already picked.
+- **Enable/Disable is declined while another job holds the prefix.** The rename happens on the
+  GUI thread and the uninstall path deletes both the file and its `.disabled` name, so the two
+  raced over the same files. It now follows the same one-job-at-a-time rule as everything else.
+- **Empty tables stay explained.** Blanking the plugin table for a screenshot, or clearing the
+  install table for a second preview, left a large empty grid on screen where the note belongs.
+- **The preset-source note is readable and populated.** It carried an inline
+  `color: palette(mid)`, which is a *background* role: on a dark desktop it rendered at 1.25:1,
+  and it was resolved once so the dark switch never re-coloured it either. It also stayed blank
+  until the preset-source dropdown was changed, because the signal is connected after the combo
+  is filled.
+
 ## 0.6.3
 
 Presentation: the repository now reads like something a newcomer can follow.

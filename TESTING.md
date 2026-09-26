@@ -183,7 +183,16 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and run
 QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab behaviours
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
+QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that dies must not leave a dead button either
 ```
+
+`tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It
+pins the six defects a review reproduced on 2026-09-27 - an uninstall pre-check whose worker raised
+(silently, with its button left disabled), a background downloads scan that fell through to the
+synchronous msitools walk on the GUI thread, the empty-state note going missing when a table was
+emptied, `find_msis` reading the prefix on the GUI thread, Enable/Disable racing a running job, and
+the preset-source note being both unreadable on a dark desktop and blank until the dropdown was
+touched. Each fix has a check here, so a regression fails the suite rather than a screenshot.
 
 `tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception.
 The install/uninstall/repair buttons are clicked too, with `apply_plan`, `uninstall_product` and
