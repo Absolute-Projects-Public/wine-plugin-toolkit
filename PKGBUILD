@@ -1,5 +1,7 @@
 # Maintainer: Absolute-Projects-Public <334208341+Absolute-Projects-Public@users.noreply.github.com>
-# Builds from the tagged source archive on GitHub, which is what anyone else would build.
+# Builds from the source tarball attached to the GitHub release, so what is verified here is the
+# exact tree that was tested. The copy of this file *inside* that tarball says sha256sums=('SKIP')
+# -- a tarball cannot carry a hash of itself; this one, in git, pins it.
 # For a local test build of an unreleased tree, use packaging/build-local.sh instead.
 pkgname=wine-plugin-toolkit
 pkgver=0.6.0
@@ -20,8 +22,10 @@ optdepends=(
 provides=('wpt')
 options=('!strip')
 
-source=("$pkgname-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')   # replaced with the real hash once the tag exists (packaging/release.sh does it)
+# The release asset, not GitHub's auto-generated tag archive: the asset is the exact tree this
+# package was built and tested from, and its hash is stable and verifiable.
+source=("wpt-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/download/v$pkgver/wpt-$pkgver.tar.gz")
+sha256sums=('1013cba986a9852cacdd54dd4ae2198098cad458464668f43dd590a201d7151f')
 
 check() {
     # The core suites are stdlib-only, so they run wherever this package is built.
