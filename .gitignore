@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+dist/
+build/
+*.pkg.tar.zst
+# local-only working documents (personal paths and notes)
+PROJECT.md
+HANDOVER.md
+wrapper-corpus-*.txt
+# captures from a real desktop session
+screenshots/
+presets-exported-*/
+presets-rescued-*/

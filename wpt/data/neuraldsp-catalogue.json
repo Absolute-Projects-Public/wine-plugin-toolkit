@@ -1,0 +1,249 @@
+{
+  "fetched": "2026-09-26 08:33",
+  "source": "https://neuraldsp.com/downloads",
+  "releases": [
+    {
+      "product": "Cortex Control",
+      "version": "4.1.0",
+      "released": "Aug 26, 2026",
+      "windows": "https://downloads.neuraldsp.com/file/cortex-control-installers/v_4.1.0/windows/Cortex%20Control%20v4.1.0.exe",
+      "macos": "https://downloads.neuraldsp.com/file/cortex-control-installers/v_4.1.0/mac/Cortex%20Control%20v4.1.0.pkg",
+      "manual": "https://neuraldsp.com/manual/quad-cortex#Cortex-Control-App",
+      "group": "Hardware"
+    },
+    {
+      "product": "Nano Cortex",
+      "version": "5.74.0",
+      "released": "Jul 24, 2025",
+      "windows": "https://downloads.neuraldsp.com/file/nano-cortex/NeuralDSP%20Nano%20Cortex%20v5.74.0.exe",
+      "macos": "",
+      "manual": "https://neuraldsp.com/manual/nano-cortex",
+      "group": "Hardware"
+    },
+    {
+      "product": "Quad Cortex",
+      "version": "5.74.0",
+      "released": "Jan 21, 2025",
+      "windows": "https://downloads.neuraldsp.com/file/quad-cortex/Neural%20DSP%20Quad%20Cortex%20v5.74.0.exe",
+      "macos": "",
+      "manual": "https://neuraldsp.com/manual/quad-cortex",
+      "group": "Hardware"
+    },
+    {
+      "product": "Quad Cortex mini",
+      "version": "5.74.0",
+      "released": "Jan 21, 2026",
+      "windows": "https://downloads.neuraldsp.com/file/quad-cortex-mini/Neural%20DSP%20Quad%20Cortex%20mini%20v5.74.0.exe",
+      "macos": "",
+      "manual": "https://www.neuraldsp.com/manual/quad-cortex-mini",
+      "group": "Hardware"
+    },
+    {
+      "product": "Archetype: Rabea X",
+      "version": "1.1.0 (X)",
+      "released": "Jul 29, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-rabea?version=1.1.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-rabea?version=1.1.0 (X)&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/archetype-rabea-x",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Misha Mansoor X",
+      "version": "1.1.0 (X)",
+      "released": "Jul 29, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-misha-mansoor?version=1.1.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-misha-mansoor?version=1.1.0 (X)&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/archetype-misha-mansoor-x",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Tim Henson X",
+      "version": "1.1.0 (X)",
+      "released": "Jul 29, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-tim-henson?version=1.1.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-tim-henson?version=1.1.0 (X)&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/archetype-tim-henson-x",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: John Mayer X",
+      "version": "1.1.0 (X)",
+      "released": "Jun 24, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-john-mayer?version=1.1.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-john-mayer?version=1.1.0 (X)&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/archetype-john-mayer-x",
+      "group": "Plugins"
+    },
+    {
+      "product": "Darkglass Ultimate",
+      "version": "1.0.1 Ultimate",
+      "released": "Apr 24, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/darkglass-ultimate?version=1.0.1 Ultimate&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/darkglass-ultimate?version=1.0.1 Ultimate&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/darkglass-ultimate",
+      "group": "Plugins"
+    },
+    {
+      "product": "Mantra",
+      "version": "1.1.1",
+      "released": "Mar 3, 2026",
+      "windows": "https://neuraldsp.com/download-confirmation/mantra?version=1.1.1&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/mantra?version=1.1.1&platform=macOS",
+      "manual": "https://neuraldsp.com/manual/mantra",
+      "group": "Plugins"
+    },
+    {
+      "product": "Morgan Amps Suite",
+      "version": "1.1.1",
+      "released": "Jun 12, 2025",
+      "windows": "https://neuraldsp.com/download-confirmation/morgan-amps-suite?version=1.1.1&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/morgan-amps-suite?version=1.1.1&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/morgan-amps-suite-installers/v_1.1.0/Morgan%20Amps%20Suite%20v1.1.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Cory Wong X",
+      "version": "1.0.1 (X)",
+      "released": "Jun 12, 2025",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-cory-wong?version=1.0.1 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-cory-wong?version=1.0.1 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-cory-wong-x/Archetype%20Cory%20Wong%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Gojira X",
+      "version": "1.0.2 (X)",
+      "released": "Nov 22, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-gojira?version=1.0.2 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-gojira?version=1.0.2 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-gojira-x/Archetype%20Gojira%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Plini X",
+      "version": "1.0.2 (X)",
+      "released": "Nov 21, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-plini?version=1.0.2 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-plini?version=1.0.2 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-plini-x-installers/v_1.0.0/Archetype-Plini-X-v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Petrucci X",
+      "version": "1.0.0 (X)",
+      "released": "Nov 21, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-petrucci?version=1.0.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-petrucci?version=1.0.0 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-petrucci-x/Archetype+Petrucci%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Fortin Nameless Suite X",
+      "version": "1.0.1 (X)",
+      "released": "Oct 29, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/fortin-nameless-suite?version=1.0.1 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/fortin-nameless-suite?version=1.0.1 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/fortin-nameless-x/Fortin%20Nameless%20Suite%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Nolly X",
+      "version": "1.0.2 (X)",
+      "released": "Oct 17, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-nolly?version=1.0.2 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-nolly?version=1.0.2 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-nolly-x-installers/Archetype%20Nolly%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Mateus Asato",
+      "version": "1.1.0",
+      "released": "Jul 23, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-mateus-asato?version=1.1.0&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-mateus-asato?version=1.1.0&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-mateus-asato/Archetype%20Mateus%20Asato%20v1.1.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Parallax X",
+      "version": "1.0.0 (X)",
+      "released": "Jul 3, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/parallax?version=1.0.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/parallax?version=1.0.0 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/parallax-x-installers/Parallax%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Soldano SLO-100 X",
+      "version": "1.0.0 (X)",
+      "released": "Apr 28, 2024",
+      "windows": "https://neuraldsp.com/download-confirmation/soldano-slo-100?version=1.0.0 (X)&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/soldano-slo-100?version=1.0.0 (X)&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/soldano-slo-x/v_1.0.0/Soldano%20SLO-100%20X%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Omega Ampworks Granophyre",
+      "version": "1.0.2",
+      "released": "Aug 31, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/omega-ampworks-granophyre?version=1.0.2&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/omega-ampworks-granophyre?version=1.0.2&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/omega-granophyre-installers/Omega%20Ampworks%20Granophyre%20v1.0.2.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Fortin NTS Suite",
+      "version": "2.0.1",
+      "released": "Jul 11, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/fortin-nts-suite?version=2.0.1&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/fortin-nts-suite?version=2.0.1&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/fortin-nts-installers/Fortin-NTS-Suite-v2.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Abasi",
+      "version": "2.0.1",
+      "released": "Jun 7, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-abasi?version=2.0.1&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-abasi?version=2.0.1&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-abasi-installers/Archetype-Abasi-v2.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Archetype: Tom Morello",
+      "version": "1.0.0",
+      "released": "May 24, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/archetype-tom-morello?version=1.0.0&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/archetype-tom-morello?version=1.0.0&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/archetype-tom-morello/v_1.0.0/Archetype%20Tom%20Morello%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Fortin Cali Suite",
+      "version": "2.0.1",
+      "released": "May 16, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/fortin-cali-suite?version=2.0.1&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/fortin-cali-suite?version=2.0.1&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/fortin-cali-installers/Fortin%20Cali%20Suite%20v2.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Tone King Imperial MKII",
+      "version": "1.0.3",
+      "released": "Apr 5, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/tone-king-imperial-mkii?version=1.0.3&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/tone-king-imperial-mkii?version=1.0.3&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/toneking-imperial/Tone%20King%20Imperial%20MKII%20v1.0.0.pdf",
+      "group": "Plugins"
+    },
+    {
+      "product": "Mesa Boogie Mark IIC+ Suite",
+      "version": "1.0.0",
+      "released": "Feb 28, 2023",
+      "windows": "https://neuraldsp.com/download-confirmation/mesa-boogie-mark-iic-suite?version=1.0.0&platform=pc",
+      "macos": "https://neuraldsp.com/download-confirmation/mesa-boogie-mark-iic-suite?version=1.0.0&platform=macOS",
+      "manual": "https://downloads.neuraldsp.com/file/Mesa-Boogie-Mark-IIC%2B-Suite-installers/Mesa%20Boogie%20Mark%20IIC%2B%20Suite%20v1.0.0.pdf",
+      "group": "Plugins"
+    }
+  ]
+}

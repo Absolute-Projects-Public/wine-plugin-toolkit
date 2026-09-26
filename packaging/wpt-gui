@@ -1,0 +1,3 @@
+#!/bin/sh
+# GUI launcher. Kept separate from `wpt` so the CLI works without PySide6.
+PYTHONPATH=/usr/lib/wpt${PYTHONPATH:+:$PYTHONPATH} exec python3 -m wpt.gui "$@"

@@ -1,0 +1,50 @@
+# Maintainer: Absolute-Projects-Public <334208341+Absolute-Projects-Public@users.noreply.github.com>
+# Builds from the tagged source archive on GitHub, which is what anyone else would build.
+# For a local test build of an unreleased tree, use packaging/build-local.sh instead.
+pkgname=wine-plugin-toolkit
+pkgver=0.6.0
+pkgrel=1
+pkgdesc="Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
+arch=('any')
+url="https://github.com/Absolute-Projects-Public/wine-plugin-toolkit"
+license=('MIT')
+depends=('python' 'msitools')
+optdepends=(
+    'pyside6: graphical front end (wpt-gui)'
+    '7zip: unpack NSIS / 7-Zip SFX / Burn-bundle wrappers without Wine'
+    'cabextract: unpack CAB and IExpress wrappers, and the cabinets inside them, without Wine'
+    'innoextract: unpack Inno Setup wrappers without Wine'
+    'unshield: unpack InstallShield wrappers without Wine'
+    'wine: run vendor installers that cannot be unpacked on Linux'
+)
+provides=('wpt')
+options=('!strip')
+
+source=("$pkgname-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')   # replaced with the real hash once the tag exists (packaging/release.sh does it)
+
+package() {
+    install -d "$pkgdir/usr/lib/wpt"
+    cp -r "$srcdir/$pkgname-$pkgver/wpt" "$pkgdir/usr/lib/wpt/"
+
+    install -Dm644 "$srcdir/$pkgname-$pkgver/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 "$srcdir/$pkgname-$pkgver/TESTING.md" "$pkgdir/usr/share/doc/$pkgname/TESTING.md"
+    install -Dm644 "$srcdir/$pkgname-$pkgver/pyproject.toml" "$pkgdir/usr/share/doc/$pkgname/pyproject.toml"
+
+    install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt" "$pkgdir/usr/bin/wpt"
+    install -Dm755 "$srcdir/$pkgname-$pkgver/packaging/wpt-gui" "$pkgdir/usr/bin/wpt-gui"
+
+    install -Dm644 "$srcdir/$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 "$srcdir/$pkgname-$pkgver/CHANGELOG.md" "$pkgdir/usr/share/doc/$pkgname/CHANGELOG.md"
+
+    # completions are generated from the real argument parser, so they cannot drift
+    ( cd "$srcdir/$pkgname-$pkgver" && PYTHONPATH=. python3 -m wpt.cli completions fish ) \
+        > "$srcdir/wpt.fish"
+    ( cd "$srcdir/$pkgname-$pkgver" && PYTHONPATH=. python3 -m wpt.cli completions bash ) \
+        > "$srcdir/wpt.bash"
+    ( cd "$srcdir/$pkgname-$pkgver" && PYTHONPATH=. python3 -m wpt.cli completions zsh ) \
+        > "$srcdir/_wpt"
+    install -Dm644 "$srcdir/wpt.fish" "$pkgdir/usr/share/fish/vendor_completions.d/wpt.fish"
+    install -Dm644 "$srcdir/wpt.bash" "$pkgdir/usr/share/bash-completion/completions/wpt"
+    install -Dm644 "$srcdir/_wpt" "$pkgdir/usr/share/zsh/site-functions/_wpt"
+}

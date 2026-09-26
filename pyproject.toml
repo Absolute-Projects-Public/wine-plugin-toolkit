@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wine-plugin-toolkit"
+version = "0.6.0"
+description = "Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["wine", "vst3", "vst2", "msi", "ableton", "audio-plugins"]
+authors = [{ name = "Absolute-Projects-Public" }]
+
+[project.urls]
+Homepage = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit"
+Repository = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit"
+Issues = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/issues"
+Changelog = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/blob/main/CHANGELOG.md"
+# the core is stdlib-only: msitools is a system dependency, not a Python one
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+
+[project.scripts]
+wpt = "wpt.cli:main"
+
+[project.gui-scripts]
+wpt-gui = "wpt.gui:main"
+
+[tool.setuptools]
+packages = ["wpt"]

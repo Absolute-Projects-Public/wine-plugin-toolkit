@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher installed by the Arch package: the package payload lives in
+# /usr/lib/wpt (not site-packages) so it never fights pacman's python packages.
+PYTHONPATH=/usr/lib/wpt${PYTHONPATH:+:$PYTHONPATH} exec python3 -m wpt.cli "$@"
