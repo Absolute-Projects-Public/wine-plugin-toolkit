@@ -68,6 +68,10 @@ from .scan import scan as scan_prefix
 
 SCRATCH = Path.home() / ".cache" / "wpt" / "extract"
 
+# Width the fallback "finishing the job" dialog gives its wrapped text, and the floor it opens at.
+# A wrapped QLabel hints badly enough that the window once came up 60x60 on a real desktop.
+_DIALOG_TEXT_WIDTH = 460
+
 
 def _fit_columns(table, stretch: dict[int, int] | None = None, contents=(), elide: dict[int, bool] | None = None,
                 min_section: int = 64) -> None:
@@ -619,6 +623,11 @@ class MainWindow(QMainWindow):
             "stopping one part-way through a write is what damages an install."
         )
         label.setWordWrap(True)
+        # A word-wrapped label has no useful width of its own to hint with, and the window came up
+        # 60x60 on a real desktop as a result (the size hint was tiny and the window manager took
+        # its own minimum). Give the text a floor to wrap against and the dialog a floor to open at,
+        # then let it size itself from that.
+        label.setMinimumWidth(_DIALOG_TEXT_WIDTH)
         layout.addWidget(label)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -631,7 +640,9 @@ class MainWindow(QMainWindow):
         force.clicked.connect(self._force_quit)
         row.addWidget(force)
         layout.addLayout(row)
+        box.setMinimumWidth(_DIALOG_TEXT_WIDTH + 60)
         box.show()
+        box.adjustSize()            # lay out now, not at whatever size the WM chose first
         self._closing_dialog = box
 
         # and it takes itself away the moment the prefix is free again, so a job that finishes

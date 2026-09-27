@@ -284,7 +284,56 @@ def find_extracted_msis(
     return sorted(set(found), key=_stamp, reverse=True)
 
 
-def stage_msi(msi: Path, scratch: Path) -> Path:
+def media_cabinets(msi: Path) -> list[str]:
+    """The cabinet filenames this package's Media table declares.
+
+    A package's payload cabinet is named by the MSI, not after it: the Fortin Cali Suite package
+    is `abba.msi` in Wine's installer cache and its payload is `Fortin Cali Suite1.cab`. Guessing
+    sidecars from the MSI's own filename finds nothing, and the uninstall then fails to read a
+    file list that is perfectly readable (review, 2026-09-27). Embedded cabinets (`#name`) are not
+    files to look for, so they are skipped.
+    """
+    try:
+        rows = export_table(msi, "Media")
+    except Exception:                      # noqa: BLE001 - an unreadable Media table is not fatal here
+        return []
+    names: list[str] = []
+    for row in rows[1:]:                   # row 0 is the header
+        for cell in row:
+            name = Path(cell).name
+            if not name or name.startswith("#"):
+                continue
+            if name.lower().endswith(".cab") and name not in names:
+                names.append(name)
+    return names
+
+
+def cabinet_search_roots(msi: Path) -> list[Path]:
+    """Where a package's cabinet can be, given where its MSI is.
+
+    Vendors leave the cabinet next to the MSI they ship, but Wine's installer cache keeps only the
+    MSI: the wrapper's install directory is where the payload stays, so those are searched too.
+    """
+    roots = [msi.parent]
+    parts = msi.resolve().parts
+    if "drive_c" in parts:
+        drive_c = Path(*parts[: parts.index("drive_c") + 1])
+        roots += [drive_c / "windows" / "Installer", drive_c / "ProgramData", drive_c / "users"]
+    return roots
+
+
+def find_cabinet(name: str, roots: list[Path]) -> Path | None:
+    """The first file called `name` under any of `roots`."""
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for candidate in sorted(root.rglob(name)):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def stage_msi(msi: Path, scratch: Path, cabinets: list[str] | None = None) -> Path:
     """Copy an MSI somewhere safe *before* anything can delete it.
 
     `msiexec /x` removes the copy of the package Windows Installer keeps in
@@ -331,6 +380,34 @@ def stage_msi(msi: Path, scratch: Path) -> Path:
         copy = keep / sibling.name
         if not (copy.exists() and copy.stat().st_size == sibling.stat().st_size):
             shutil.copy2(sibling, copy)
+
+    # Then the cabinets this MSI actually names, wherever they are on the machine. Wine's installer
+    # cache keeps the MSI without its payload - the cabinet stays in the wrapper's own install
+    # directory - so a cached copy could not be read at all until this looked for it. Found on a
+    # real prefix: the Tim Henson package's cabinet sat 400 MB away in
+    # `AppData/Roaming/Neural DSP/.../install/`, and the uninstall refused for want of it.
+    wanted = media_cabinets(msi) if cabinets is None else list(cabinets)
+    absent: list[str] = []
+    for name in wanted:
+        copy = keep / name
+        if copy.is_file():
+            continue
+        source = msi.parent / name
+        if not source.is_file():
+            source = find_cabinet(name, cabinet_search_roots(msi)[1:])
+        if source is None:
+            absent.append(name)
+            continue
+        if not (copy.exists() and copy.stat().st_size == source.stat().st_size):
+            shutil.copy2(source, copy)
+    if absent:
+        # Refuse with something actionable: without the cabinet there is no file list, and a file
+        # list is what every removal path is built on.
+        raise MsiError(
+            f"the cabinet {', '.join(absent)} that {msi.name} needs is not on this machine any "
+            "more, so its file list cannot be read and nothing has been removed. Running the "
+            "vendor's installer again brings the cabinet back"
+        )
     return target
 
 

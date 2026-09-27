@@ -259,6 +259,18 @@ check("a dialog explains the wait", closing._closing_dialog is not None, True)
 check("and it is on screen", closing._closing_dialog.isVisible(), True)
 buttons = [b.text() for b in closing._closing_dialog.findChildren(gui_mod.QPushButton)]
 check("with the explicit way out", any("Force quit" in text for text in buttons), True)
+# Reported from a real desktop: the window opened 60x60 with unreadable text, because a
+# word-wrapped label hints badly and the window manager honoured its own minimum. Both the floor
+# and the "no clipped lines" check are here so it cannot come back.
+box = closing._closing_dialog
+check("it opens wide enough to read", box.width() >= 400, True)
+check("and tall enough to read", box.height() >= 80, True)
+message = box.findChild(gui_mod.QLabel)
+check("its message is not clipped",
+      message.height() >= message.heightForWidth(message.width()), True)
+check("and the whole message is there",
+      "still running against the prefix" in message.text()
+      and "damages an install" in message.text(), True)
 drain_other = time.time() + 20
 while closing._jobs_running() and time.time() < drain_other:
     app.processEvents()

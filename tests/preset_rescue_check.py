@@ -9,7 +9,9 @@ Covers what the review found:
 * `_removal_targets` covers the `.disabled` rename of a bundle directory too, not just of a plain
   file, so an uninstall of a currently-disabled plugin cleans up after itself.
 * `stage_msi` gives each staged MSI its own directory, so two packages' sidecars cannot overwrite
-  each other in the shared cache.
+  each other in the shared cache, and it brings the cabinet the MSI *names* (not only a file that
+  happens to sit beside it), because Wine's installer cache keeps the MSI without its payload.
+* a cabinet that is genuinely gone is refused by name, with nothing touched.
 
     python3 tests/preset_rescue_check.py
 """
@@ -165,6 +167,43 @@ with tempfile.TemporaryDirectory() as tmp:
           ((staged_a.stat().st_size, staged_b.stat().st_size)), (20, 40))
     check("re-staging the same MSI reuses its directory",
           msi_mod.stage_msi(product_a / "setup.msi", scratch), staged_a)
+
+    print("7. a package's cabinet is found where it actually is, not only beside the MSI")
+    # Wine's installer cache keeps the MSI without its payload: the cabinet stays in the wrapper's
+    # install directory. A cached copy used to be unreadable for want of a cabinet sitting in the
+    # same prefix, so the search has to cover the prefix - found on a real one, 2026-09-27.
+    cabinet_prefix = root / "prefix"
+    installer_cache = cabinet_prefix / "drive_c" / "windows" / "Installer"
+    onthedisk = cabinet_prefix / "drive_c" / "users" / "tester" / "AppData" / "Roaming" / "Neural DSP" / "Product 1.0" / "install"
+    installer_cache.mkdir(parents=True)
+    onthedisk.mkdir(parents=True)
+    cached_msi = installer_cache / "abba.msi"
+    cached_msi.write_bytes(b"an msi that needs a cabinet")
+    payload_cab = onthedisk / "Product1.cab"
+    payload_cab.write_bytes(b"c" * 4096)
+
+    check("the prefix is discovered from the MSI's own path",
+          msi_mod.cabinet_search_roots(cached_msi)[1:],
+          [installer_cache, cabinet_prefix / "drive_c" / "ProgramData", cabinet_prefix / "drive_c" / "users"])
+    check("and the cabinet is found in it",
+          msi_mod.find_cabinet("Product1.cab", msi_mod.cabinet_search_roots(cached_msi)[1:]),
+          payload_cab)
+
+    staging_scratch = cabinet_prefix / "scratch"
+    staged_cached = msi_mod.stage_msi(cached_msi, staging_scratch, cabinets=["Product1.cab"])
+    check("staging brings the named cabinet with the MSI",
+          (staged_cached.parent / "Product1.cab").is_file(), True)
+    check("and it is byte-for-byte the same",
+          (staged_cached.parent / "Product1.cab").read_bytes(), payload_cab.read_bytes())
+
+    print("8. a cabinet that is genuinely gone is refused, by name")
+    try:
+        msi_mod.stage_msi(cached_msi, staging_scratch, cabinets=["Vanished1.cab"])
+        check("it raised", "no exception", "MsiError")
+    except msi_mod.MsiError as exc:
+        check("it raised an MsiError", True, True)
+        check("naming the cabinet that is missing", "Vanished1.cab" in str(exc), True)
+        check("saying nothing was removed", "nothing has been removed" in str(exc), True)
 
 print(f"\npreset rescue checks: {checks - len(failures)}/{checks} passed")
 if failures:
