@@ -185,6 +185,8 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update ch
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that dies must not leave a dead button either
 python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
+python3 tests/tables_plan_check.py                              # a removal read from the MSI's tables instead of its payload
+python3 tests/wrapper_display_check.py                          # a wrapper whose window could not appear is refused, not launched
 WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py # the updater against built release artefacts
 ```
 

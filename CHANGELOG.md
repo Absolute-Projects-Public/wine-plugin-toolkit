@@ -3,6 +3,43 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## 0.6.4
+
+Two ways the toolkit could leave a product stuck, both reproduced on a real prefix and fixed
+against it, plus one refusal that beats an invisible wait.
+
+- **A product whose payload media is gone can now be uninstalled.** Wine's installer cache keeps
+  only the MSI, and a vendor bootstrapper deletes the payload it unpacked once it is finished, so
+  an installed product can end up with its media gone. Reading it then failed outright - *"cannot
+  read Fortin Cali Suite.msi for its file list ... nothing was removed"* - which left a working
+  plugin nobody could remove, and deleting files by hand as the only way out. Ten of the
+  twenty-two MSIs on the review machine are in that state. The file list now comes from the MSI's
+  own Directory/Component/File tables when the payload cannot be extracted - the same three tables
+  `msiextract` reads - and both routes run through one planner, so they cannot disagree. A plan
+  read this way carries no payload, and installing from it is refused. Verified against every MSI
+  on the machine: 12 comparable packages, 12 identical destination lists, 22 tables plans refused
+  for install. On the real product: 18 destinations removed, 62 preset files rescued first, the
+  registration cleared.
+  - A folder the MSI only *declares* is never a removal target. `PREDIR/User` holds no file until
+    the product runs, and it is where your own presets live: `msiextract` never creates it, so
+    neither does this.
+  - `stage_msi()` no longer refuses over a missing cabinet on an uninstall. It refused *before* any
+    plan was built, which is why the message above arrived with nothing else attached to it.
+    Installing and repairing still refuse, because placing files does need the payload.
+- **A failed install no longer holds the window.** `install_failed()` opened a blocking dialog
+  *before* re-enabling Install and Preview, and everything after it waited. A failure therefore
+  left those buttons disabled - and with the window hidden, sent to another display, or in a
+  headless run, nobody ever dismissed it, so they stayed disabled for good. The buttons are now
+  freed first and the report is a modeless notice that is not waited on, the same reasoning as the
+  quit dialog 0.6.3 made modeless. (This is also what made `tests/gui_smoke.py` sit out its whole
+  600 s timeout; it finishes in 4 s now.)
+- **A vendor installer is refused when its window could not appear.** A `.exe` whose only route is
+  its own Windows setup program is now refused up front when the session has no display (`DISPLAY`
+  and `WAYLAND_DISPLAY` both unset), instead of being launched into nothing: it would wait for a
+  click that cannot come and look hung for up to forty minutes. The refusal says exactly that, and
+  what to do about it. `WPT_ALLOW_HEADLESS_WINE=1` runs it anyway, for an installer that is
+  genuinely unattended.
+
 ## 0.6.3
 
 Stability fixes from a GUI review, each one reproduced before it was fixed and pinned in

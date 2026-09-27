@@ -581,6 +581,23 @@ def unpack_on_linux(
     return result
 
 
+def display_available() -> bool:
+    """Whether a window opened right now could actually be seen and clicked.
+
+    Wine's GUI needs a display connection. With neither `DISPLAY` nor `WAYLAND_DISPLAY` set there
+    is none, so a vendor installer that puts up a window becomes a process nobody can see or
+    dismiss: it sits at 0% CPU until its own timeout, which is forty minutes of an apparently
+    hung job with nothing on screen to explain it. Observed for real on the Fortin Cali Suite
+    wrapper over SSH (2026-09-27) - the window simply never appeared.
+
+    `WPT_ALLOW_HEADLESS_WINE=1` overrides this, for an installer whose own switches make it
+    genuinely unattended.
+    """
+    if os.environ.get("WPT_ALLOW_HEADLESS_WINE"):
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 def run_wrapper(env: Environment, wrapper: Path, timeout: int = 2400) -> tuple[int, str]:
     """Run the vendor's own installer under Wine, inside this prefix.
 
@@ -692,6 +709,25 @@ def prepare_msi(
             attempts=unpacked.attempts,
             family=info.name,
             payload_dirs=unpacked.payload_dirs,
+        )
+
+    if not display_available():
+        # Refuse instead of launching the vendor's installer into nothing. Without a display its
+        # window cannot appear, so it waits for a click that can never come and the job looks hung
+        # until the timeout - the state a user cannot diagnose, and the one this tool must not
+        # walk into. Refusing costs nothing: the same wrapper run from a desktop session works.
+        return WrapperResult(
+            route="none",
+            family=info.name,
+            attempts=unpacked.attempts,
+            payload_dirs=unpacked.payload_dirs,
+            detail=(
+                f"{path.name} is the vendor's Windows setup program, and this session has no "
+                "display for its window (DISPLAY and WAYLAND_DISPLAY are both unset). Running it "
+                f"would appear to hang for up to {timeout // 60} minutes with nothing on screen. "
+                "Run this from a desktop session, or point DISPLAY at one. If this particular "
+                "installer runs unattended, set WPT_ALLOW_HEADLESS_WINE=1 to run it anyway."
+            ),
         )
 
     say(f"running {path.name} under Wine - the vendor installer will extract its MSI into the prefix")
