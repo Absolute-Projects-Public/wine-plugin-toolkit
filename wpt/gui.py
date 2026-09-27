@@ -232,6 +232,8 @@ class MainWindow(QMainWindow):
         # because the waits below pump the event loop and it has to stay clickable
         self._closing_dialog = None
         self._forced = False
+        # non-blocking notices, held so Qt does not collect them while they are on screen
+        self._notices: list[QDialog] = []
         # update checking owns its own workers so an update never queues behind, or blocks,
         # the prefix jobs (and vice versa)
         self._downloads_scan_running = False
@@ -1511,10 +1513,49 @@ class MainWindow(QMainWindow):
             self.log("done - rescan plugins in your DAW")
         self._busy(False)
 
+    def _notice(self, title: str, message: str) -> None:
+        """Report something without stopping the event loop.
+
+        `QMessageBox.critical()` is blocking: it runs a nested event loop that ends only when
+        someone dismisses it, so every line after it waits - including the code that frees the
+        buttons the job had disabled. On a desktop that is one click; with the window hidden, sent
+        to another display, or running headless, nobody ever clicks it and the toolkit sits there
+        with those buttons disabled for good. The message still appears; it just is not waited on,
+        which is the same reason the quit dialog above is modeless.
+        (Found in the stability review: it is what hung tests/gui_smoke.py for its whole 600 s
+        timeout, and what leaves a failed install with Install and Preview still disabled.)
+        """
+        box = QDialog(self)
+        box.setWindowTitle(title)
+        box.setModal(False)
+        layout = QVBoxLayout(box)
+        label = QLabel(message)
+        label.setWordWrap(True)
+        label.setMinimumWidth(_DIALOG_TEXT_WIDTH)
+        layout.addWidget(label)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close = QPushButton("Close")
+        close.clicked.connect(box.close)
+        row.addWidget(close)
+        layout.addLayout(row)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.setMinimumWidth(_DIALOG_TEXT_WIDTH + 60)
+
+        def forget(*_args) -> None:
+            if box in self._notices:
+                self._notices.remove(box)
+
+        box.finished.connect(forget)
+        self._notices.append(box)
+        box.show()
+        box.adjustSize()
+
     def install_failed(self, message: str) -> None:
+        # Free the buttons *before* reporting anything: see _notice().
         self.log(f"FAILED: {message}")
-        QMessageBox.critical(self, "Install failed", message)
         self._busy(False)
+        self._notice("Install failed", message)
 
     def _busy(self, busy: bool) -> None:
         self.btn_install.setEnabled(not busy)

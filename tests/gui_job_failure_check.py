@@ -320,6 +320,41 @@ os._exit = _real_exit
 guarded.close()
 guarded._closing_dialog = None
 
+# ---------------------------------------------------------------- a failure must not hold the window
+# `QMessageBox.critical()` blocks until someone dismisses it, and every line after it waits --
+# including the `_busy(False)` that frees the buttons. Headless, or with the window on another
+# display, nobody ever dismisses it: Install and Preview stayed disabled for good, and the plugin
+# refresh that follows the failure never ran. (It is also what hung tests/gui_smoke.py for its
+# whole 600 s timeout.)
+print()
+print("a failed install frees its buttons, keeps pumping, and still says why")
+from PySide6.QtCore import QTimer  # noqa: E402
+
+window._busy(True)
+check("the buttons are disabled while a job runs", window.btn_install.isEnabled(), False)
+window.install_failed("the plan could not be read")
+check("Install is usable again straight away", window.btn_install.isEnabled(), True)
+check("so is Preview", window.btn_preview.isEnabled(), True)
+check("nothing modal is holding the event loop", QApplication.activeModalWidget(), None)
+check("the failure reached the log",
+      "FAILED: the plan could not be read" in window.install_log.toPlainText(), True)
+check("and it was reported in its own window", len(window._notices), 1)
+check("which does not block", window._notices[0].isModal(), False)
+
+pumped: list[int] = []
+QTimer.singleShot(0, lambda: pumped.append(1))
+for _ in range(50):
+    app.processEvents()
+    if pumped:
+        break
+    time.sleep(0.01)
+check("the event loop is still running", bool(pumped), True)
+
+for box in list(window._notices):
+    box.close()
+app.processEvents()
+check("closing the notice releases it", len(window._notices), 0)
+
 print(f"jobs still running on the way out: {window._jobs_running()}")
 window.close()
 app.processEvents()
