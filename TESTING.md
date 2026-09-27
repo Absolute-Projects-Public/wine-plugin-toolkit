@@ -185,6 +185,7 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update ch
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that dies must not leave a dead button either
 python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
+WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py # the updater against built release artefacts
 ```
 
 `tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It
@@ -194,6 +195,13 @@ synchronous msitools walk on the GUI thread, the empty-state note going missing 
 emptied, `find_msis` reading the prefix on the GUI thread, Enable/Disable racing a running job, and
 the preset-source note being both unreadable on a dark desktop and blank until the dropdown was
 touched. Each fix has a check here, so a regression fails the suite rather than a screenshot.
+
+`tests/updater_e2e_check.py` is the release gate for `wpt update`: it stands a GitHub-API-shaped
+stub on localhost, serves the four assets from `dist/`, and then runs the real updater code -
+`latest_release`, the version comparison, asset selection, the download, the zstd check and the
+per-asset checksum - plus `wpt update --install show` exactly as a user on the previous release
+would run it. It needs a built release (`WPT_RELEASE_DIR=~/wpt-release`) and exits 2 rather than
+failing when the artefacts are not there yet.
 
 `tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception.
 The install/uninstall/repair buttons are clicked too, with `apply_plan`, `uninstall_product` and
