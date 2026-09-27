@@ -239,6 +239,77 @@ def declares_plugin_payload(msi: Path) -> bool:
     return verdict
 
 
+def _long_name(cell: str) -> str:
+    """One `DefaultDir` / `FileName` cell as the name on disk: `SHORTC~1|Long Name` -> `Long Name`."""
+    return cell.split("|", 1)[1] if "|" in cell else cell
+
+
+def payload_directories(msi: Path) -> dict[str, list[tuple[str, bool]]]:
+    """What each payload root holds, read from the MSI's own tables: {root: [(name, is_dir), ...]}.
+
+    msiextract recreates these directories from the same three tables; this reads them without
+    the payload, so a package whose cabinet is gone can still be described file by file.
+    (`msiextract` needs the cabinet. `msiinfo export` does not.)
+
+    Two rules keep the result identical to what extraction actually produces:
+
+    * A directory holding no file anywhere beneath it is not created by msiextract, so it is not
+      listed here either. This is not cosmetic: `PREDIR/User` is declared by the vendor's MSI but
+      empty until the product runs, and that folder is where the user's own presets live. Listing
+      it would turn it into a removal target and delete them.
+    * Only the payload roots -- `TARGETDIR`'s children -- are returned, matching
+      `extracted_root_dirs()`.
+    """
+    dirs: dict[str, tuple[str, str]] = {}
+    for row in export_table(msi, "Directory"):
+        if row:
+            dirs[row[0]] = (
+                row[1] if len(row) > 1 else "",
+                _long_name(row[2]) if len(row) > 2 else "",
+            )
+    component_dir = {row[0]: row[2] for row in export_table(msi, "Component") if len(row) > 2}
+    files = [
+        (row[1], _long_name(row[2]))
+        for row in export_table(msi, "File")
+        if len(row) > 2 and row[1] in component_dir
+    ]
+
+    own_files: dict[str, list[str]] = {}
+    for component, name in files:
+        own_files.setdefault(component_dir[component], []).append(name)
+
+    subtree_files: dict[str, int] = {}
+    children_of: dict[str, list[str]] = {}
+    for key, (parent, _name) in dirs.items():
+        if parent:
+            children_of.setdefault(parent, []).append(key)
+
+    def count(key: str, seen: frozenset[str] = frozenset()) -> int:
+        if key in seen:  # a malformed table that points at itself
+            return 0
+        total = len(own_files.get(key, []))
+        for child in children_of.get(key, []):
+            total += count(child, seen | {key})
+        return total
+
+    for key in dirs:
+        subtree_files[key] = count(key)
+
+    tree: dict[str, list[tuple[str, bool]]] = {}
+    for key, (parent, _name) in dirs.items():
+        if parent != "TARGETDIR":
+            continue
+        entries: list[tuple[str, bool]] = [
+            (dirs[child][1], True)
+            for child in children_of.get(key, [])
+            if subtree_files.get(child, 0) > 0  # never a folder the MSI only declares
+        ]
+        entries += [(name, False) for name in own_files.get(key, [])]
+        if entries:
+            tree[key] = sorted(entries, key=lambda item: (not item[1], item[0]))
+    return tree
+
+
 def find_extracted_msis(
     prefix: Path, hint: str | None = None, include_installer_cache: bool = False
 ) -> list[Path]:
@@ -333,7 +404,13 @@ def find_cabinet(name: str, roots: list[Path]) -> Path | None:
     return None
 
 
-def stage_msi(msi: Path, scratch: Path, cabinets: list[str] | None = None) -> Path:
+def stage_msi(
+    msi: Path,
+    scratch: Path,
+    cabinets: list[str] | None = None,
+    *,
+    require_cabinets: bool = True,
+) -> Path:
     """Copy an MSI somewhere safe *before* anything can delete it.
 
     `msiexec /x` removes the copy of the package Windows Installer keeps in
@@ -344,6 +421,12 @@ def stage_msi(msi: Path, scratch: Path, cabinets: list[str] | None = None) -> Pa
 
     The copy goes to a **sibling** of the scratch dir, because `extract()` empties its scratch
     before every extraction.
+
+    `require_cabinets=False` stages the MSI and whatever sidecars exist, and does not refuse when
+    the payload media is gone. An uninstall passes that: the removal it builds is read from the
+    MSI's own tables, which do not need the cabinet (see `builder.build_plan_from_tables`), so a
+    missing cabinet must not stop the copy from being made out of msiexec's reach. Installing and
+    repairing keep the default and still refuse, because placing files does need the payload.
     """
     msi = Path(msi)
     scratch = Path(scratch)
@@ -400,9 +483,9 @@ def stage_msi(msi: Path, scratch: Path, cabinets: list[str] | None = None) -> Pa
             continue
         if not (copy.exists() and copy.stat().st_size == source.stat().st_size):
             shutil.copy2(source, copy)
-    if absent:
-        # Refuse with something actionable: without the cabinet there is no file list, and a file
-        # list is what every removal path is built on.
+    if absent and require_cabinets:
+        # Refuse with something actionable: without the cabinet there is no payload to place, and
+        # placing files is what an install or a repair is for.
         raise MsiError(
             f"the cabinet {', '.join(absent)} that {msi.name} needs is not on this machine any "
             "more, so its file list cannot be read and nothing has been removed. Running the "

@@ -35,8 +35,11 @@ class Plan:
     warnings: list[str] = field(default_factory=list)
     expected: dict[str, int] = field(default_factory=dict)
     skipped_app: list[tuple[str, Path]] = field(default_factory=list)   # app/driver payloads, left alone
+    destinations_only: bool = False   # read from the MSI's own tables: what to remove, nothing to place
 
     def total_bytes(self) -> int:
+        if self.destinations_only:   # there is no payload to copy, only destinations to act on
+            return 0
         total = 0
         for action in self.actions:
             if action.source.is_file():
@@ -139,6 +142,25 @@ def places_a_plugin(plan: Plan) -> bool:
     return any(action.label.split(" ")[0] in PLUGIN_KEYS for action in plan.actions)
 
 
+class PayloadEntry:
+    """One entry inside a payload directory, as the MSI's own tables describe it.
+
+    `_destination_for` only reads `.name` and `.is_dir()` off what it is handed -- normally paths
+    from msiextract's output, here from the Directory/Component/File tables. Both routes therefore
+    run through exactly the same resolution, so a tables-derived plan cannot drift from an
+    extracted one.
+    """
+
+    __slots__ = ("name", "_is_dir")
+
+    def __init__(self, name: str, is_dir: bool) -> None:
+        self.name = name
+        self._is_dir = is_dir
+
+    def is_dir(self) -> bool:
+        return self._is_dir
+
+
 def build_plan(
     msi: Path,
     env: Environment,
@@ -151,16 +173,86 @@ def build_plan(
     include_app_files: bool = False,
 ) -> Plan:
     """Describe every copy the install needs, without touching the disk."""
+    root = Path(extraction_root)
+    return _plan_from(
+        msi,
+        env,
+        roots=msi_mod.extracted_root_dirs(root),
+        entries_for=lambda name: sorted((root / name).iterdir()) if (root / name).is_dir() else [],
+        destinations_only=False,
+        include_vst2=include_vst2,
+        include_aax=include_aax,
+        include_standalone=include_standalone,
+        include_presets=include_presets,
+        include_app_files=include_app_files,
+    )
+
+
+def build_plan_from_tables(
+    msi: Path,
+    env: Environment,
+    *,
+    include_vst2: bool = True,
+    include_aax: bool = False,
+    include_standalone: bool = True,
+    include_presets: bool = True,
+    include_app_files: bool = False,
+) -> Plan:
+    """Describe what this MSI placed, from its own tables, with no payload needed.
+
+    `build_plan()` extracts the payload first, and `msiextract` needs the cabinet for that. Wine's
+    installer cache keeps only the MSI, and a vendor bootstrapper deletes the payload it unpacked
+    once it is done, so an installed product can end up with its media gone -- and then reading it
+    failed outright and an uninstall was impossible, even though the MSI knows exactly which files
+    it placed. (Fortin Cali Suite on this machine, 2026-09-27: a working install nobody could
+    remove.)
+
+    Everything a removal needs is in the tables. The result carries no payload: `destinations_only`
+    is set, so `apply_plan()` will not install from it.
+    """
+    tree = msi_mod.payload_directories(msi)
+    return _plan_from(
+        msi,
+        env,
+        roots=sorted(tree),
+        entries_for=lambda name: [PayloadEntry(n, d) for n, d in tree.get(name, [])],
+        destinations_only=True,
+        include_vst2=include_vst2,
+        include_aax=include_aax,
+        include_standalone=include_standalone,
+        include_presets=include_presets,
+        include_app_files=include_app_files,
+    )
+
+
+def _plan_from(
+    msi: Path,
+    env: Environment,
+    *,
+    roots: list[str],
+    entries_for,
+    destinations_only: bool,
+    include_vst2: bool = True,
+    include_aax: bool = False,
+    include_standalone: bool = True,
+    include_presets: bool = True,
+    include_app_files: bool = False,
+) -> Plan:
+    """The one place a payload directory becomes a destination, however it was read."""
     ident = msi_mod.identity(msi)
-    plan = Plan(msi=msi, identity=ident, expected=msi_mod.expected_sizes(msi))
+    plan = Plan(
+        msi=msi,
+        identity=ident,
+        expected=msi_mod.expected_sizes(msi),
+        destinations_only=destinations_only,
+    )
     # A plugin package may carry a standalone app (APPDIR) and other directories; an application
     # or driver package carries none of the plugin payload directories. That is the line.
     is_plugin_package = msi_mod.declares_plugin_payload(msi)
 
-    for name in msi_mod.extracted_root_dirs(extraction_root):
+    for name in roots:
         key = name.split(":")[0].strip().upper()
-        source = extraction_root / name
-        children = sorted(source.iterdir()) if source.is_dir() else []
+        children = entries_for(name)
         dest = _destination_for(name, ident, env, children=children)
 
         if key == "AAXDIR" and not include_aax:
@@ -192,10 +284,12 @@ def build_plan(
             )
             continue
 
-        for child in sorted(source.iterdir()):
+        for child in children:
             plan.actions.append(
                 Action(
-                    source=child,
+                    # a tables plan has no payload to copy, so `source` is nominal there; it is
+                    # never read (apply_plan refuses such a plan, and removal acts on `dest`)
+                    source=child if isinstance(child, Path) else Path(child.name),
                     dest=dest / child.name,
                     label=f"{key} -> {dest}",
                     no_clobber=(key == "PREDIR"),
@@ -222,6 +316,15 @@ def apply_plan(
     prefix. Passing no env is only allowed for a dry run, which writes nothing - a real run without
     it refuses every action rather than guessing.
     """
+    if plan.destinations_only:
+        # Built from the MSI's own tables: it names the destinations to remove and has no payload
+        # behind it, so there is nothing to copy. Installing from it would treat file *names* as
+        # files. Refuse: a removal is what such a plan is for (see remove_files()).
+        raise msi_mod.MsiError(
+            "this plan was read from the MSI's own tables, not from its payload - it describes "
+            "what to remove, not what to install. Its cabinet is not on disk; run the vendor's "
+            "installer once to restore it."
+        )
     results: list[tuple[str, str, str]] = []
     for action in plan.actions:
         # Second line of defence: a plan should already contain only in-prefix destinations, but

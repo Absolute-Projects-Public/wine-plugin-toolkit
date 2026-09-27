@@ -34,6 +34,7 @@ from .environment import EnvironmentError_, detect
 from .installer import (
     apply_plan,
     build_plan,
+    build_plan_from_tables,
     filter_needing_repair,
     render_plan,
     set_enabled as set_plugin_enabled,
@@ -559,7 +560,7 @@ def cmd_uninstall(args) -> int:
     # ------------------------------------------------------------------ read first
     if msi is not None and not args.no_files:
         try:
-            staged = msi_mod.stage_msi(msi, scratch)
+            staged = msi_mod.stage_msi(msi, scratch, require_cabinets=False)
         except (OSError, msi_mod.MsiError) as exc:
             print(
                 f"cannot read {msi.name}: {exc}\n"
@@ -610,21 +611,32 @@ def cmd_uninstall(args) -> int:
         if msi is None:
             print("no MSI available, so the file list is unknown - pass one to remove files", file=sys.stderr)
             return 2
+        options = {
+            "include_vst2": True,
+            "include_aax": True,
+            "include_standalone": True,
+            "include_presets": True,
+        }
         try:
             msi_mod.extract(msi, scratch)
-            plan = build_plan(
-                msi,
-                env,
-                scratch,
-                include_vst2=True,
-                include_aax=True,
-                include_standalone=True,
-                include_presets=True,
-            )
         except msi_mod.MsiError as exc:
-            print(f"cannot read the file list out of {msi.name}: {exc}", file=sys.stderr)
-            print("  nothing has been touched yet", file=sys.stderr)
-            return 4
+            # The cabinet is what extracting needs, and Wine's installer cache does not keep it.
+            # The MSI's own tables name every file it placed, so the removal can still be exact --
+            # this is the Fortin Cali Suite case: installed, working, its media gone, and an
+            # uninstall used to be impossible.
+            try:
+                plan = build_plan_from_tables(msi, env, **options)
+            except msi_mod.MsiError:
+                print(f"cannot read the file list out of {msi.name}: {exc}", file=sys.stderr)
+                print("  nothing has been touched yet", file=sys.stderr)
+                return 4
+            print(f"the payload media for {msi.name} is gone:")
+            print(f"  {exc}")
+            print("  the file list comes from the MSI's own tables instead - the removal below is")
+            print("  unchanged, and nothing outside this prefix is touched. (Running the vendor's")
+            print("  installer once puts its payload back.)")
+        else:
+            plan = build_plan(msi, env, scratch, **options)
         print(f"this MSI describes {len(plan.actions)} destination(s)")
 
     # `msiexec /x` only works if Windows Installer knows the product. Say so up

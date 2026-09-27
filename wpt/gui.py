@@ -58,6 +58,7 @@ from .installer import (
     DISABLED_SUFFIX,
     apply_plan,
     build_plan,
+    build_plan_from_tables,
     filter_needing_repair,
     set_enabled as set_plugin_enabled,
     uninstall as uninstall_product,
@@ -1185,10 +1186,23 @@ class MainWindow(QMainWindow):
             # Fortin Cali Suite uninstall). The MSI is staged out of reach, and an unreadable
             # MSI stops here, before anything is touched.
             try:
-                msi_path = msi_mod.stage_msi(msi_path, SCRATCH)
+                msi_path = msi_mod.stage_msi(msi_path, SCRATCH, require_cabinets=False)
                 emit(f"reading {msi_path.name} before msiexec runs")
-                msi_mod.extract(msi_path, SCRATCH)
-                plan = build_plan(msi_path, self.env, SCRATCH, include_aax=True)
+                try:
+                    msi_mod.extract(msi_path, SCRATCH)
+                except msi_mod.MsiError as exc:
+                    # Extracting needs the cabinet. Wine's cache keeps only the MSI, and a vendor
+                    # bootstrapper deletes the payload it unpacked, so an installed product can
+                    # end up with its media gone - and then this refused outright, leaving a
+                    # working plugin nobody could remove. The MSI's tables still name every file
+                    # it placed, and a removal only acts on those destinations.
+                    plan = build_plan_from_tables(msi_path, self.env, include_aax=True)
+                    emit(f"! {msi_path.name}: its payload media is gone")
+                    emit(f"!   {exc}")
+                    emit("!   reading the file list from the MSI's own tables - what gets removed")
+                    emit("!   is unchanged, and nothing outside this prefix is touched")
+                else:
+                    plan = build_plan(msi_path, self.env, SCRATCH, include_aax=True)
             except (OSError, msi_mod.MsiError) as exc:
                 raise RuntimeError(
                     f"cannot read {msi_path.name} for its file list ({exc}), nothing was removed"
