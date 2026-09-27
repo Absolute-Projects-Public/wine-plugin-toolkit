@@ -3,7 +3,7 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
-## Unreleased
+## 0.6.3
 
 Stability fixes from a GUI review, each one reproduced before it was fixed and pinned in
 `tests/gui_job_failure_check.py` and `tests/preset_rescue_check.py`.
@@ -54,8 +54,6 @@ Stability fixes from a GUI review, each one reproduced before it was fixed and p
   and it was resolved once so the dark switch never re-coloured it either. It also stayed blank
   until the preset-source dropdown was changed, because the signal is connected after the combo
   is filled.
-
-## 0.6.3
 
 Presentation: the repository now reads like something a newcomer can follow.
 
