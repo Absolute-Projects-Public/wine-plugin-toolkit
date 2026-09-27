@@ -10,7 +10,7 @@
 Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
 refuses to run, then prove afterwards that the files are really there.
 
-**Status: 0.6.3. Early, and honest about it.** It is developed against one real stack (Neural DSP
+**Status: 0.6.4. Early, and honest about it.** It is developed against one real stack (Neural DSP
 plugins on CachyOS, Ableton Live 12 via [shibco/ableton-linux](https://github.com/shibco/ableton-linux))
 and verified against real installers. Other vendors and other kinds of prefix are triaged read-only
 rather than promised. Bug reports are welcome: `wpt doctor` prints most of what is needed for one.
