@@ -653,10 +653,12 @@ def cmd_uninstall(args) -> int:
     # The real work on this stack: delete exactly what the MSI's File table placed.
     if not args.no_files and plan is not None:
         if args.rescue_presets:
-            product_for_presets = plan.identity.product_name or args.product or ""
-            saved, rescue_dir = presets_mod.rescue(
+            # Same rule as the GUI: the products to look at come from the plan and the vendor tree,
+            # not from the MSI's ProductName, which can be absent or differ from the folder the
+            # vendor's installer created. `--product` selects an MSI and is not a product name.
+            saved, saved_for, looked_at = presets_mod.rescue_for_plan(
                 env,
-                product_for_presets,
+                plan,
                 vendor=args.vendor,
                 dry_run=args.dry_run,
             )
@@ -671,9 +673,15 @@ def cmd_uninstall(args) -> int:
                     print(f"  {status:8} {source}   {note}")
                 if len(saved) > 12:
                     print(f"  ... and {len(saved) - 12} more")
-                print(f"  kept in: {rescue_dir}")
+                for _product, rescue_dir in saved_for:
+                    print(f"  kept in: {rescue_dir}")
             else:
-                print("\npresets: none found for this product (nothing of yours to lose)")
+                # "none found" has to be told apart from "we did not look", and it must not read as
+                # reassurance: the removal below deletes whatever the MSI's File table names.
+                print("\npresets: nothing found to rescue, and the files below are still deleted")
+                print("  looked at: "
+                      + (", ".join(looked_at) if looked_at else "no product folder in this prefix"))
+                print("  if this product keeps your own presets here, rescue them by hand first")
 
         rows = installer_mod.remove_files(plan, env, dry_run=args.dry_run)
         for status, path, note in rows:

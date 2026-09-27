@@ -71,6 +71,9 @@ with tempfile.TemporaryDirectory() as tmp:
     env = detect(home=home, prefix=home / ".wine-ableton")
     product_root = plant_user_presets(env, "Archetype Test X")
     user_dir = product_root / "User"
+    # ALWAYS an explicit rescue_root: DEFAULT_RESCUE_ROOT is under the *real* home, and a test that
+    # omits it writes into the user's own rescue store (this one did, once).
+    rescue_root = root / "rescue"
 
     def plan_for(dest: Path, product_name: str):
         payload = root / "extracted"
@@ -84,7 +87,8 @@ with tempfile.TemporaryDirectory() as tmp:
 
     print("1. an MSI that declares no ProductName still gets the presets rescued")
     plan = plan_for(user_dir, "")
-    rows, saved_for, looked_at = presets_mod.rescue_for_plan(env, plan, stamp="demo")
+    rows, saved_for, looked_at = presets_mod.rescue_for_plan(
+        env, plan, rescue_root=rescue_root, stamp="demo")
     check("the rescue ran at all", bool(rows), True)
     check("and looked at the product the plan is about to touch",
           "Archetype Test X" in looked_at, True)
@@ -103,7 +107,8 @@ with tempfile.TemporaryDirectory() as tmp:
     print("3. an MSI whose ProductName differs from the folder is rescued too")
     plant_user_presets(env, "Archetype Test X")
     plan = plan_for(product_root / "User", "Archetype Test X Plugin")
-    rows, saved_for, _ = presets_mod.rescue_for_plan(env, plan, stamp="demo2")
+    rows, saved_for, _ = presets_mod.rescue_for_plan(
+        env, plan, rescue_root=rescue_root, stamp="demo2")
     check("the presets were copied despite the mismatched name",
           sum(1 for r in rows if r[0] in ("saved", "kept")), 4)
 
@@ -114,7 +119,8 @@ with tempfile.TemporaryDirectory() as tmp:
                    identity=MsiIdentity(product_name="", manufacturer="Neural DSP"),
                    expected={}, actions=[]
                    )
-    rows, saved_for, looked_at = presets_mod.rescue_for_plan(empty_env, nowhere)
+    rows, saved_for, looked_at = presets_mod.rescue_for_plan(
+        empty_env, nowhere, rescue_root=rescue_root)
     check("no rows", rows, [])
     check("and nothing found to look at", looked_at, [])
     check("so the caller can say it looked and found nothing", len(looked_at), 0)

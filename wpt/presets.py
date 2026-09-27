@@ -213,17 +213,23 @@ def rescue_for_plan(
     the rescue quietly saved nothing while the uninstall went on to delete the user's presets, so
     the dialog's promise was not kept (reproduced in the review, 2026-09-27).
 
-    The products to look at therefore come from the paths the plan is about to touch and from every
-    product folder in the vendor tree, not from the MSI. Returns (rows, [(product, destination)],
+    The products to look at therefore come from the paths the plan is about to touch and from the
+    ProductName it declares, not from the name alone. Returns (rows, [(product, destination)],
     products_looked_at) - the third is what the caller reports when nothing was found, so "none"
     can be told apart from "we did not look".
     """
     candidates: list[str] = []
     declared = getattr(getattr(plan, "identity", None), "product_name", "") or ""
-    for name in (declared, *products_under(env, (action.dest for action in plan.actions), vendor),
-                 *product_dirs(env, vendor)):
+    # Deliberately NOT every product folder in the vendor tree: an uninstall of one product would
+    # then copy every other product's presets as well (200 files and four "kept in" destinations,
+    # seen on a real dry run). The plan is the authority on what is deleted, so only the products
+    # its own destinations sit inside are looked at.
+    for name in (declared, *products_under(env, (action.dest for action in plan.actions), vendor)):
         cleaned = name.strip() if isinstance(name, str) else ""
-        if cleaned and cleaned not in candidates:
+        if not cleaned or cleaned.lower() == vendor.strip().lower():
+            # a destination at the vendor root itself is not a product folder
+            continue
+        if cleaned not in candidates:
             candidates.append(cleaned)
 
     rows: list[tuple[str, str, str]] = []
