@@ -20,7 +20,7 @@ mkdir -p "$ROOT"
 # What ships: the package, the tests, the packaging scripts, and the documents written for whoever
 # uses it. PROJECT.md and HANDOVER.md are deliberately NOT here - they are the working record, and
 # they contain machine-specific paths and notes that do not belong in a release.
-for item in wpt tests packaging README.md TESTING.md CHANGELOG.md LICENSE pyproject.toml PKGBUILD docs; do
+for item in wpt tests packaging README.md TESTING.md CONTRIBUTING.md CHANGELOG.md LICENSE pyproject.toml PKGBUILD docs; do
     cp -r "$item" "$ROOT/"
 done
 find "$ROOT" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true

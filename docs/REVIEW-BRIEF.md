@@ -39,9 +39,9 @@ bash packaging/run-suites.sh <tree>          # every suite, each with the enviro
 python3 packaging/scan-identifiers.py .      # the public surface, for identifiers
 ```
 
-- The GUI suites need PySide6 and must run on a machine that has it; the agent host has only the
-  stdlib, so `test_core`, `test_prefix_integration`, `preset_rescue_check`, `tables_plan_check`
-  and `wrapper_display_check` are the ones that run anywhere.
+- The GUI suites need PySide6 and must run on a machine that has it. A host without PySide6 can run
+  `test_core`, `test_prefix_integration`, `preset_rescue_check`, `tables_plan_check`
+  and `wrapper_display_check`.
 - `updater_e2e_check` needs a built release (`WPT_RELEASE_DIR`); it is skipped, not failed, when
   there is none.
 - The suites must be run with **the environment each documents** — `updater_e2e_check` needs

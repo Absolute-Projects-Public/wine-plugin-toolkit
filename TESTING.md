@@ -2,9 +2,11 @@
 
 `wpt` installs, repairs, inventories and removes **Windows audio plugins in an ableton-linux style Wine
 prefix**, the shape used when a vendor's installer refuses to run under Wine. It unpacks the vendor MSI
-with `msitools` and places the payload itself, then verifies every file against the MSI's own `File` table.
+with `msitools` and places the payload itself. **Current size checks are incomplete** for duplicate
+basenames and bundle internals; `ok` is not a per-file payload audit. See [the claim ledger](docs/CLAIMS.md).
 
-Nothing here is destructive unless you ask for it. Every command that changes something has `--dry-run`.
+Install, uninstall and Wine wrapper paths can change files. Use `--dry-run` where offered and a disposable
+prefix for tests. A dry-run flag is not by itself proof that an external vendor program has no side effects.
 
 ## What you need
 
@@ -37,7 +39,7 @@ All of these are read-only. Run them and keep the output:
 
 ```bash
 wpt env          # does it find your Wine tree, prefix, Windows user and plugin directories?
-wpt list         # inventory: every plugin file, with its size checked against the cached MSI
+wpt list         # inventory: matched names' sizes checked against cached MSIs, with known limits
 wpt scan         # registry vs disk: installs that registered but never copied their files
 wpt products     # triage of every Wine prefix on the machine, newest install first
 wpt presets      # your presets and downloaded packs, per product
@@ -62,14 +64,15 @@ wpt pending                                    # installers you have downloaded 
 wpt catalogue                                  # Neural DSP's download list (bundled snapshot)
 wpt catalogue --refresh                        # re-read their live page
 wpt catalogue --open "nolly"                   # open that plugin's download page in your browser
-wpt install <some>.msi --dry-run               # the plan, without writing anything
+wpt install <some>.msi --dry-run               # preview prefix changes; scratch may be written
 wpt install <something>.exe --dry-run          # vendor .exe: see how it would get to an MSI
 wpt disable Nolly --dry-run                    # hide a plugin from the DAW scanner (reversible rename)
-wpt uninstall --product <X> --dry-run --purge  # exactly what would be removed, files and registry
+wpt uninstall --product <X> --dry-run --purge  # planned targets/registry, not nested files or Wine effects
 ```
 
-Read `wpt uninstall --dry-run` output carefully before ever running it for real: it lists every file the
-MSI placed, and `--purge` adds the registry entries that point at them.
+Read `wpt uninstall --dry-run` output carefully before ever running it for real: it lists planned
+destinations (a directory is one row), not every nested file or possible Wine side effect.
+`--purge` also previews the registry entries it would target.
 
 ## The `.exe` question
 
@@ -117,10 +120,10 @@ exactly why it does not try to fetch anything itself.
 
 | verdict | meaning |
 |---|---|
-| `ok` | the file on disk is exactly the size the MSI's `File` table promised |
+| `ok` | its basename matched an expected MSI size; duplicate names can misattribute the match |
 | `unverified` | no MSI that describes this file was found, so there is nothing to compare it with, `wpt find-msi` shows which MSIs it can see |
 | (not listed) | executables in `Program Files` that no plugin MSI describes. Wine's own tools and other vendors' helpers. Counted in one line; `wpt list --all-standalone` lists them |
-| `BROKEN` | the size disagrees with the MSI: usually a half-written install, and `wpt repair` re-places just that file |
+| `BROKEN` | the matched size disagrees; compare the path/owner before using repair, as matches can be ambiguous |
 
 `unverified` is not a failure. It means the toolkit has no reference for the file, commonly because the
 product was installed by hand, or by a wrapper that kept its MSI somewhere unusual.
@@ -145,9 +148,12 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 
 ## Cautions
 
-- **Presets**: `uninstall` copies your own presets and any downloaded packs to
-  `~/.local/share/wpt/presets/<product>/<timestamp>/` before it removes anything. `--no-rescue` turns that
-  off. Do not use it on work you care about.
+- **Presets**: both CLI and GUI currently call `msiexec /x` **then** rescue **then** their own file
+  deletion (`wpt/cli.py:654–698`, `wpt/gui.py:1214–1240`). The GUI has no `--files-only` option.
+  The rescue recognises some user presets and downloaded packs and stores them
+  under `~/.local/share/wpt/presets/<product>/<timestamp>/`, but cannot undo any earlier vendor deletion;
+  planned directories are later removed recursively (`wpt/installer.py:530–569`). Back up first. On
+  the CLI, `--files-only` skips Wine's `msiexec` step; `--no-rescue` skips the toolkit's rescue too.
 - **Activations**: deleting files does not free an iLok/PACE activation. Deactivate in iLok License
   Manager first, or use *Report as Unusable* there if the location is unreachable.
 - **Uninstall routes through `msiexec /x` first**, which is a no-op on prefixes where the product was
@@ -156,6 +162,9 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
   needs from that MSI *before* running it, and why a product uninstalled that way can have no MSI left
   afterwards. If you then ask the toolkit to remove it again it will tell you what the prefix still holds
   under that name instead.
+- **Dry-run scope**: `uninstall --dry-run` still stages the MSI and extracts into scratch. It previews
+  planned destinations, not individual files in a directory and not the side effects of a real Wine
+  uninstall. A directory destination includes any extra files you put beneath it; back those up first.
 - Scope for this version: **only** the ableton-linux style prefix. Steam/Lutris/Bottles prefixes are
   triaged (read-only in `wpt products`) but never written to.
 
@@ -179,6 +188,7 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 ```bash
 python3 tests/test_core.py                              # pure logic, no prefix needed
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
+python3 tests/readme_claims_check.py                    # mechanical README claims, not an MSI proof
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and runs every tab (needs PySide6)
 QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab behaviours
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed

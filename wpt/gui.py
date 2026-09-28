@@ -1161,17 +1161,16 @@ class MainWindow(QMainWindow):
                 else "Not registered with Windows Installer in this prefix, so msiexec has nothing "
                 "to remove and the files go directly.\n"
             )
-            + f"Files: every file {msi_path.name} placed will be deleted. VST3, VST2, AAX, "
-            "standalone and the factory presets it lists.\n\nYour own presets and any downloaded "
-            "packs are looked for across the whole vendor folder in this prefix, not just under "
-            "this installer's own name, and copied to ~/.local/share/wpt/presets/ first. The job "
-            "says exactly what it copied, and warns if it found nothing."
+            + f"Planned destinations from {msi_path.name} will be removed. A directory is removed "
+            "recursively, including any user files added to it.\n\nWine's msiexec /x runs BEFORE the "
+            "toolkit looks for presets. It may remove files first, including host paths mapped into "
+            "the prefix. The toolkit then attempts to rescue recognised presets to "
+            "~/.local/share/wpt/presets/ before its own direct deletion. Back up your own data "
+            "before continuing; this rescue is not a guarantee.\n\nDeleting plugin files does "
+            "not return an iLok activation; deactivate it separately."
             + (
-                "\n\nREGISTRY PURGE is on and will also remove the product's registry entries, so "
-                "nothing is left pointing at the deleted files.\nIt does NOT free an activation: if "
-                "this plugin was activated here and you are done with this prefix, deactivate it in "
-                "iLok License Manager first, or use 'Report as Unusable' there if the location is "
-                "unreachable. Otherwise the licence slot stays consumed."
+                "\n\nREGISTRY PURGE is on and will remove matching product entries pointing at "
+                "planned files. Other registry entries may remain."
                 if purge
                 else ""
             ),
@@ -1202,7 +1201,7 @@ class MainWindow(QMainWindow):
                     emit(f"! {msi_path.name}: its payload media is gone")
                     emit(f"!   {exc}")
                     emit("!   reading the file list from the MSI's own tables - what gets removed")
-                    emit("!   is unchanged, and nothing outside this prefix is touched")
+                    emit("!   is unchanged. Wine and scratch can affect paths outside the prefix")
                 else:
                     plan = build_plan(msi_path, self.env, SCRATCH, include_aax=True)
             except (OSError, msi_mod.MsiError) as exc:
@@ -1217,7 +1216,8 @@ class MainWindow(QMainWindow):
                 emit(detail)
             emit(f"msiexec exited {code}" + ("" if code == 0 else " (no registration to clear?)"))
 
-            # presets first, always: the MSI's own files come back with a reinstall,
+            # Presets before our direct deletion, but AFTER msiexec above. The MSI's own files
+            # come back with a reinstall;
             # the user's own and downloaded packs do not. The products to look at come from the
             # plan's own destinations and the vendor tree, not from the MSI's ProductName - that
             # can be absent, or differ from the folder the vendor's installer created, and either
@@ -1226,10 +1226,9 @@ class MainWindow(QMainWindow):
             if saved:
                 for product, destination in saved_for:
                     emit(f"presets: {product} -> {destination}")
-                emit(f"presets: {len(saved)} file(s) copied, nothing deleted yet")
+                emit(f"presets: {len(saved)} file(s) copied; toolkit direct deletion has not run yet")
             else:
-                # Loud on purpose: this is the case where the promise in the confirmation dialog
-                # cannot be kept, and the deletion below goes ahead regardless.
+                # Loud on purpose: an empty rescue is not reassurance; direct deletion follows.
                 emit("! presets: nothing found to rescue, and the files below are still being "
                      "deleted")
                 emit("!   looked at: "
@@ -1274,7 +1273,7 @@ class MainWindow(QMainWindow):
             for path in remaining:
                 self.plugin_log.appendPlainText(f"    {path}")
         else:
-            self.plugin_log.appendPlainText("removed every file this MSI placed")
+            self.plugin_log.appendPlainText("no planned destination remains on disk; nested files were not audited")
         if purge_rows:
             for status, target, note in purge_rows:
                 self.plugin_log.appendPlainText(f"{status}: {target} {note}".strip())

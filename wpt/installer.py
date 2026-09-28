@@ -528,12 +528,14 @@ def _prune_empty_parents(parent: Path, env: Environment) -> int:
 
 
 def remove_files(plan: Plan, env: Environment, dry_run: bool = False) -> list[tuple[str, str, str]]:
-    """Delete exactly the files this MSI placed -- its File table, nothing else.
+    """Remove planned destinations; directories are deleted recursively.
 
     This is the uninstall route that works on a prefix where the product was never
     registered with Windows Installer (`msiexec /x` then has nothing to remove and
-    silently does nothing). It never deletes a path the MSI does not name, and it
-    refuses anything outside the prefix.
+    silently does nothing). A directory target can contain user-added files not
+    named by the MSI; callers must warn and rescue/back up before invoking this.
+    The direct deletion refuses destinations outside the prefix; Wine itself is
+    a separate process with its own possible effects.
     """
     rows: list[tuple[str, str, str]] = []
     removed_dirs: list[Path] = []

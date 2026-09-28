@@ -47,13 +47,12 @@ from .scan import scan as scan_prefix
 DEFAULT_SCRATCH = "/tmp/wpt-extract"
 
 PURGE_WARNING = """\
---purge also removes the product's registry entries, so nothing is left pointing at
-the files just deleted:
+--purge also removes matching product registry entries that point at planned files:
 
-  - every value that points at a file this MSI placed (those files are gone)
+  - selected values pointing at planned destinations (which may now be gone)
   - the product's own Uninstall / InstallProperties entry, if it has one
 
-This is what stops `wpt scan` reporting the product as a broken install afterwards.
+This can clear stale pointers reported by `wpt scan`; rerun it to see what remains.
 It does NOT free an activation. Files can be deleted; activations cannot:
 
   * If this plugin was activated here (iLok / PACE, or a vendor account) and you will
@@ -63,10 +62,10 @@ It does NOT free an activation. Files can be deleted; activations cannot:
   * Otherwise the slot stays consumed and the plugin may refuse to authorise on the
     machine you actually use.
 
-Your own presets and settings are not touched unless the MSI itself placed them --
-and even then they are copied out first: every preset you saved and every downloaded
-pack is rescued to ~/.local/share/wpt/presets/<product>/<timestamp>/ before the
-files are removed (skip that with --no-rescue, which is how people lose work)."""
+The uninstall may already have affected user files: msiexec /x runs before the
+toolkit's best-effort preset rescue, and planned directories are removed
+recursively. The rescue copies recognised presets only; --no-rescue skips it.
+Use a separate backup before any uninstall, not just this rescue store."""
 
 
 def _env(args):
@@ -513,7 +512,7 @@ def cmd_repair(args) -> int:
     )
     todo = filter_needing_repair(plan)
     if not todo.actions:
-        print("nothing to do: every file the MSI describes is already present at the right size")
+        print("no repair actions selected by the current size matcher; this is not a complete file audit")
         return 0
     print(f"{len(todo.actions)} destination(s) missing or wrong size:")
     for action in todo.actions:
@@ -633,8 +632,8 @@ def cmd_uninstall(args) -> int:
             print(f"the payload media for {msi.name} is gone:")
             print(f"  {exc}")
             print("  the file list comes from the MSI's own tables instead - the removal below is")
-            print("  unchanged, and nothing outside this prefix is touched. (Running the vendor's")
-            print("  installer once puts its payload back.)")
+            print("  unchanged. Toolkit file removal targets the prefix, but Wine and scratch may")
+            print("  affect other paths. Running the vendor's installer once puts its payload back.")
         else:
             plan = build_plan(msi, env, scratch, **options)
         print(f"this MSI describes {len(plan.actions)} destination(s)")
@@ -649,6 +648,9 @@ def cmd_uninstall(args) -> int:
         print("not registered with Windows Installer in this prefix:")
         print("  msiexec /x has nothing to remove, so the files have to go directly")
 
+    print("warning: back up your own files first. msiexec /x may run before preset rescue; "
+          "planned directories are removed recursively, including user-added files.")
+    print("deleting plugin files does not return an iLok activation; deactivate it separately.")
     failures = 0
 
     if not args.files_only:
@@ -711,7 +713,7 @@ def cmd_uninstall(args) -> int:
                 for path in remaining:
                     print(f"    {path}", file=sys.stderr)
             else:
-                print("\nremoved every file this MSI placed")
+                print("\nno planned destination remains on disk; nested/unowned files are not audited")
 
         if args.purge:
             print()

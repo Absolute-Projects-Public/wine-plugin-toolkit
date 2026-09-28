@@ -8,7 +8,8 @@
 [![platform](https://img.shields.io/badge/platform-Arch%20%2F%20CachyOS-1793d1)](#install)
 
 Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
-refuses to run, then prove afterwards that the files are really there.
+refuses to run, then inspect the files it placed. The current size checks have limitations for
+duplicate names and bundle-internal files; see [verification limits](#how-it-verifies).
 
 **Status: 0.6.4. Early, and honest about it.** It is developed against one real stack (Neural DSP
 plugins on CachyOS, Ableton Live 12 via [shibco/ableton-linux](https://github.com/shibco/ableton-linux))
@@ -21,14 +22,21 @@ rather than promised. Bug reports are welcome: `wpt doctor` prints most of what 
 
 - **Installs** a plugin from the vendor's MSI, or from the vendor's `.exe` installer, by unpacking it
   with `msitools` and placing the payload itself.
-- **Verifies** every file it placed against the MSI's own `File` table, size for size. Not "the
-  installer exited 0": the numbers.
-- **Repairs** only the files that are missing or the wrong size, from the MSI cached in the prefix.
-- **Uninstalls** a product properly, rescuing your own presets and downloaded packs first.
+- **Checks** sizes at planned destinations whose names match the MSI's `File` table (for a bundle,
+  it may measure one matching inner file).
+  This is not yet a complete check of every placed file (see [verification limits](#how-it-verifies)).
+- **Attempts repair** from a cached MSI for missing files and detected size mismatches. Case, duplicate
+  names and bundles can escape the current size matching; check the result rather than trusting it.
+- **Uninstalls** planned destinations and attempts to rescue recognised presets before its own direct
+  file removal. The CLI currently calls Wine's `msiexec /x` **before** preset rescue, so this is not
+  a guarantee that presets survive the vendor uninstaller. `--files-only` skips that Wine step. A planned
+  directory is removed recursively, including any files added to it later: back up your own data and
+  inspect `--dry-run` before removal (see [uninstall limits](#scope-and-limitations)).
 - **Inventories** what is installed, and finds installs that registered but never copied their files.
 - **Hides and restores** a plugin from your DAW's scanner without touching anything else.
-- **Does not need Wine** for most vendor installers: 7-Zip, Inno, InstallShield, NSIS, Burn and CAB
-  wrappers are unpacked on Linux. Wine is the fallback, not the first move.
+- **Attempts Linux extraction first** for recognised 7-Zip, Inno, InstallShield, NSIS, Burn and CAB
+  wrapper families when the corresponding unpacker is installed. This is not a promise that every
+  vendor installer works without Wine; Advanced Installer (including Neural DSP) needs Wine.
 
 ## Why this exists
 
@@ -120,8 +128,10 @@ If it cannot find your Wine stack, tell it where to look: `wpt --prefix ~/.wine-
 
 ## Coming from Windows
 
-You paid for this software. None of it has to be re-bought to run here, and nothing about this tool
-invalidates a licence: it moves files inside your own prefix, and that is all.
+You paid for this software. Removing plugin files does not return an iLok activation slot;
+licensing remains a separate vendor/iLok step.
+It writes plugin files inside the prefix and may also use scratch space, preset-rescue storage and
+exports outside it; Wine's own uninstall can affect host paths mapped into the prefix.
 
 **What you need first.** A working ableton-linux install, which is what creates `~/.wine-ableton` and
 the staged Wine build this tool looks for. That project is the one that makes Live itself run.
@@ -138,8 +148,9 @@ wpt install ~/Downloads/ArchetypeNollyXv1.0.2.exe
 ```
 
 `pending` guesses the product and version from the file name, and says whether that version is already
-in the prefix. `install` reads the installer first, shows you exactly which files it would place, and
-only then writes them. Add `--dry-run` to look without touching anything.
+in the prefix. `install` reads the installer and shows planned destinations (a directory may contain
+more files than the preview lists) before writing them. Add `--dry-run` to preview prefix writes without
+placing plugin files; staging/extraction can still write to scratch.
 
 **Your own presets, sounds and MIDI maps.** These are the one thing a reinstall cycle cannot bring
 back. Copy them off the Windows machine (usually `Documents\Neural DSP\...`, or wherever you saved
@@ -151,8 +162,9 @@ wpt presets --export ~/Documents/my-presets     # copy it all out to a plain fol
 ```
 
 Factory and artist presets come back with a reinstall. Yours do not, so back them up before you
-uninstall anything. `wpt uninstall` also copies your own presets out of the way before it removes
-files, and tells you where it put them, unless you pass `--no-rescue`.
+uninstall anything. `wpt uninstall` attempts to copy presets it recognises before **its own** file
+removal and tells you what it found, unless you pass `--no-rescue`. The CLI currently invokes Wine's
+`msiexec /x` earlier; back up your files yourself before any uninstall. `--files-only` avoids `msiexec`.
 
 **Activation and iLok.** Some vendors use iLok (PACE) or an account-based licence. The toolkit
 does not touch licensing, and deleting plugin files never returns a licence slot. If a plugin was
@@ -184,14 +196,14 @@ wpt products                # triage every product in every Wine prefix on this 
 wpt pending                 # installers downloaded but not installed yet
 wpt find-msi                # vendor MSIs already unpacked inside the prefix
 wpt inspect <msi>           # identity, install targets, launch conditions, payload
-wpt plan <msi>              # extract and show exactly what would be written
-wpt install <msi> --dry-run # the same, with nothing touching the disk
-wpt install <msi>           # do it, then verify byte sizes against the MSI
+wpt plan <msi>              # extract and show planned destinations
+wpt install <msi> --dry-run # preview prefix writes; extraction still uses scratch
+wpt install <msi>           # do it, then run the current (limited) size checks
 wpt install ~/Downloads/VendorSetup.exe   # or point it straight at the vendor's .exe
-wpt repair --product Rabea  # re-place only the files that are missing or wrong-sized
+wpt repair --product Rabea  # attempt to re-place missing/detected wrong-sized files
 wpt disable Nolly           # hide a plugin from the DAW scanner (a plain rename)
 wpt enable Nolly            # bring it back
-wpt uninstall --product X   # clear the registration and delete the files it placed
+wpt uninstall --product X   # see the uninstall limits below before running for real
 wpt wrappers                # identify every .exe installer around, and its route to an MSI
 wpt presets                 # your presets and downloaded packs, and what has been rescued
 ```
@@ -206,7 +218,7 @@ Useful flags, common to the commands that need them:
 | flag | why |
 |---|---|
 | `--product <substring>` | pick an MSI from the prefix without typing the path (`--product Rabea`) |
-| `--dry-run` | show every change, write nothing |
+| `--dry-run` | preview planned destinations without applying prefix changes; MSI staging/extraction still writes to scratch. A directory is one row even if it contains other files; external Wine effects are not predicted. |
 | `--no-vst2` / `--no-standalone` / `--no-presets` | skip parts you do not want |
 | `--aax` | include the AAX plugin (Pro Tools only, off by default) |
 | `--scratch <dir>` | where the payload is extracted (default `/tmp/wpt-extract`) |
@@ -276,7 +288,7 @@ nothing a DAW can use: this package is an application or a driver, not a plugin.
   files by hand does not do. Pass --include-app-files to place them anyway.
 ```
 
-Pass `--include-app-files` to have those placed anyway (byte-verified like everything else), knowing
+Pass `--include-app-files` to have those placed anyway (subject to the size-check limits above), knowing
 no DAW will see them. A plugin package is unaffected by this rule: its own standalone app is still
 installed.
 
@@ -305,10 +317,12 @@ wpt presets --open "Preset Junkie" --product "Nolly X"
 
 **Presets are the one thing an install or uninstall cycle cannot bring back.** Factory and artist
 presets come back with a reinstall. Your own (`<product>/User/*.xml`), downloaded packs
-(`<vendor>/<vendor>/<Pack> Presets/`) and hand-made MIDI maps do not. So `uninstall` copies every
-irreplaceable preset to `~/.local/share/wpt/presets/<product>/<timestamp>/` **before** it removes
-anything, without overwriting what is already there, and tells you the count and destination.
-`--no-rescue` turns that off, and it is how people lose work.
+(`<vendor>/<vendor>/<Pack> Presets/`) and hand-made MIDI maps do not. The toolkit attempts to copy
+presets it recognises to `~/.local/share/wpt/presets/<product>/<timestamp>/` before **its own**
+file deletion, without overwriting an existing rescue. Both the CLI and GUI run Wine's `msiexec /x`
+**before** this rescue attempt; the GUI has no `--files-only` equivalent. An MSI or vendor uninstaller
+may therefore remove user data first. Back up your own files before uninstalling and read the
+planned destinations. `--no-rescue` skips the toolkit's rescue; it is not a safety option.
 
 The toolkit does not fetch presets from the internet, deliberately: the community repositories want a
 sign-in, one vault sits behind a bot filter, and the shops want money. What it does is open the right
@@ -381,39 +395,47 @@ Six tabs, in the order you use them, each a thin wrapper over the same core func
   whether an installer is already in `~/Downloads`. *Download Selected Plugin* opens its page in your
   browser; the *Preset & IR sources* row opens preset sites for the plugin you have selected.
 - **Pending Install**: installers sitting in `~/Downloads` or the prefix root that are not installed
-  yet, or are an upgrade. *Install selected* runs the same extract, place, verify as the CLI, one
+  yet, or are an upgrade. *Install selected* runs the same extract, place and size checks as the CLI, one
   plugin at a time. This is the staging step: download on the previous tab, install on this one.
 - **Install MSI**: pick or browse an MSI, choose VST3 / VST2 / standalone / presets, *Preview plan*
-  then *Install*. A results table and a log, ending with the byte-for-byte verification.
+  then *Install*. A results table and a log show the current, limited size checks.
 - **Diagnostics**: scans the prefix registry for plugin paths that do not exist on disk, lists the
   products it registers (runtimes hidden), and *Triage products in every Wine prefix* reports what
   every prefix on the machine holds and which entries are debris.
 
-Long operations run on a worker thread, so the window never freezes mid-extract. A plugin that is
-disabled stays visible, flagged `disabled`, so it can always be brought back.
+Long operations are dispatched to worker threads; this is not a guarantee that no GUI path can block.
+A disabled plugin stays visible, flagged `disabled`, so it can be brought back.
 
 ## How it verifies
 
-This is the part worth trusting. Nothing here reports success because an installer said so:
+The toolkit does not take an installer's exit status as proof of correct file placement. Its current
+checks are useful, but **not a complete per-file verification**:
 
-- the **plan** comes from the MSI's own `File` table: exactly which files, to which directories, at
-  which sizes;
-- after writing, every file is **re-read and compared by size** with what the MSI says it should be;
-- `BROKEN` in `list` means a file that exists at the wrong size, `unverified` means there was no MSI
-  to compare against, and `ok` means both the file and its size agree;
+- the **plan** uses extracted payload directories and MSI metadata to choose destinations;
+- after writing, `verify_plan` compares sizes for destinations whose **base names** match an MSI
+  `File` table entry. Two entries with the same name but different directories collapse to one
+  expected size; a bundle's internal files can go unchecked (`wpt/msi.py:191-205`,
+  `wpt/installer.py:377-419` in the 0.6.4 code);
+- `BROKEN` in `list` is a detected mismatch, `unverified` means there was no matched MSI size,
+  and `ok` means the **matched name's** size agreed. The current inventory also keys by base name,
+  so `ok` does not certify every file in a product (`wpt/inventory.py:107-175`);
 - state is cross-checked two ways: the plugin directories (`list`) and the prefix registry (`scan`);
-- `wpt doctor` checks the surrounding environment, and the GUI suites render and click through every
-  tab offscreen before a release is built.
+- `wpt doctor` checks the surrounding environment. GUI suites exercise tabs offscreen on a machine
+  with PySide6; they do not replace real-desktop checks.
+
+The correction and acceptance criteria for complete verification are tracked in
+[the claim ledger](docs/CLAIMS.md) and [the design review map](docs/DESIGN.md). Until that work
+passes, do not interpret an `ok` result as a complete MSI payload audit.
 
 ## Scope and limitations
 
 - Verified end to end against **Neural DSP** installers (Advanced Installer and MSI) on a real
   `~/.wine-ableton` prefix: inventory sizes matched the MSIs, the scan reported zero missing paths, and
   `install --dry-run` reproduced the destinations that were previously placed by hand.
-- **Wrapper families**: the Linux route is verified against real installers of each kind it claims: a
-  7-Zip self-extractor (a Neural DSP hardware wrapper, MSI recovered and read by msitools), WiX Burn
-  bundles (`vc_redist` and `dotnet-runtime`, with the right architecture chosen out of the appended
-  cabinet), and Advanced Installer (correctly refused as Wine-only). Known gap: `innoextract` on a
+- **Wrapper families**: the recorded real-wrapper examples cover a 7-Zip self-extractor (a Neural
+  DSP hardware wrapper), WiX Burn bundles (`vc_redist` and `dotnet-runtime`) and Advanced Installer
+  (refused as Wine-only). The other named families are code paths, not a claim that a real installer
+  of each family has passed. Known gap: `innoextract` on a
   current Arch is older than the newest Inno Setup releases, so a brand-new Inno installer is
   identified but not opened. The tool says which version it could not read rather than pretending.
 - `unshield` is used for InstallShield if it is installed, but it is not part of the base install.
@@ -425,19 +447,26 @@ This is the part worth trusting. Nothing here reports success because an install
 - `scan`'s list of present paths can include a plugin's **support dlls** (Qt's `qwindows.dll` and
   friends live in plugin directories and are legitimate entries). They are not noise to filter
   blindly, just more entries than the four paths you may be looking for.
-- **`uninstall` reads the MSI before it runs anything.** `msiexec /x` deletes Windows Installer's
-  cached copy of the package, and on this stack that cache is often the only copy a product has
-  (anything installed by running its vendor wrapper never writes one into its own folder), so the
-  ProductCode, the File table and the plan are all taken **first**, and the MSI is copied out of reach.
-  If it cannot be read at all, the command stops with nothing changed. Once msiexec has removed the
-  registration and the cache, no MSI is left to describe the product: `wpt uninstall --product X` then
+- **`uninstall` reads the MSI before it runs `msiexec /x`.** Windows Installer can delete its cached
+  MSI during removal, and that cache may be the only copy the toolkit can find. The ProductCode and
+  plan are read first, and the MSI is staged out of reach. If it cannot be read, the toolkit stops
+  before prefix removal; scratch staging may already have written temporary files. Once msiexec
+  removes the registration and the cache, no MSI may be left to describe the product:
+  `wpt uninstall --product X` then
   says so and lists what the prefix still holds under that name, rather than pretending.
-- `uninstall` removes a product two ways, because on this stack only one of them really works:
-  `msiexec /x` clears the Windows Installer registration (usually a no-op, since none of these
-  products are registered in the prefix), then **every file the MSI's File table placed** is deleted
-  directly, with empty directories pruned and everything verified afterwards. `--no-files` stops after
+- `uninstall` removes a product two ways: `msiexec /x` attempts to clear the Windows Installer
+  registration, then the toolkit removes each **planned destination**. A destination that is a
+  directory is removed **recursively**, including files the MSI did not originally place
+  (`wpt/installer.py:530-569`); preset rescue recognises some personal files, not necessarily all.
+  **The CLI invokes `msiexec /x` before rescue** (`wpt/cli.py:652-698`). Wine's `msiexec` may also
+  affect a Linux path mapped from the prefix (such as Desktop). Back up
+  user data and inspect `--dry-run`; the GUI also runs `msiexec /x` before rescue and offers no
+  `--files-only` route. On the CLI, use `--files-only` to skip Wine's registration removal. The
+  toolkit then checks for remaining planned paths, **not** each original MSI file. `--no-files` stops after
   msiexec, `--files-only` skips it, `--purge` also removes the registry entries pointing at the
-  deleted files, `--dry-run` lists every change first. Purging never frees an activation.
+  deleted files. `--dry-run` lists planned destinations, not every file inside a directory and not
+  Wine's potential side effects; MSI staging/extraction may still write to scratch. Purging never
+  frees an activation.
 - **Which MSIs the tool can see.** Sizes are cross-checked against the MSIs cached inside the prefix: a
   vendor's own folder (`AppData/Roaming/Neural DSP/...`), `ProgramData/Package Cache`, and **Wine's
   Windows Installer cache** (`drive_c/windows/Installer/`). That last one matters, because a product
@@ -466,6 +495,7 @@ python3 tests/test_core.py                # pure logic, no prefix needed
 python3 tests/test_prefix_integration.py  # builds a synthetic prefix and exercises everything
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py       # builds the GUI and runs every tab
 QT_QPA_PLATFORM=offscreen python3 tests/gui_buttons_check.py  # clicks every button offscreen
+python3 tests/readme_claims_check.py    # parser/tabs/flags/known limitations (not real-MSI proof)
 ```
 
 `test_core.py` covers Wine tree version ordering, `.reg` value decoding (including UTF-16 `str(2)`
@@ -493,6 +523,9 @@ tests/               the suites listed above, plus wrapper corpus and GUI layout
 One design rule holds the whole thing together: **no logic in the front ends.** If the GUI and the CLI
 could ever disagree, the bug belongs in a core module.
 
+Before submitting a behaviour claim or code change, see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[claim ledger](docs/CLAIMS.md). A code citation is not proof of a real-machine result.
+
 ## Credits
 
 - [msitools](https://wiki.gnome.org/msitools) reads and unpacks the vendor MSIs.
@@ -507,14 +540,14 @@ MIT licensed. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 ## AI Disclosure
 
 Development here is AI-assisted: an agent (Hermes, by Nous Research, driving models through
-OpenRouter — the model varies by task) does much of the diagnosis, reproduction, implementation,
-test authoring, documentation and release tooling. The maintainer reviews every change and owns it.
+OpenRouter — the model varies by task) assists with diagnosis, reproduction, implementation,
+test authoring, documentation and release tooling. The maintainer owns release decisions.
 
-That comes with the rule this project is built on: **a change ships only if it can be reproduced and
-verified.** Each fix is reproduced before it is made and then pinned in the test suite; the full
-suite has to pass from the extracted release tarball, not just from the working tree; release
-artefacts are checksum-verified end to end, including a download-back comparison against what was
-built.
+The release gate for future changes requires a reproduced defect, a regression check, the full suite
+from an extracted release tarball, an independent review, and checksum comparison of published
+artefacts against what was built. The current 0.6.4 code predates the claim ledger and has the
+verification and uninstall limitations stated above. A passing script alone does not certify every
+README sentence; see [the claim ledger](docs/CLAIMS.md) for what is still open.
 
 Contributions: AI-assisted work is welcome if you understand it and can explain the change, and if
 it comes with evidence — a reproduction, a test, or a reason. We will not accept fully-vibecoded
