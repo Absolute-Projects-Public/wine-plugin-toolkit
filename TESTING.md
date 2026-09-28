@@ -190,6 +190,21 @@ python3 tests/wrapper_display_check.py                          # a wrapper whos
 WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py # the updater against built release artefacts
 ```
 
+Three of the checks that matter most now ship with the project instead of living in an agent's
+workspace, because a reviewer should be able to run them too:
+
+```bash
+bash packaging/run-suites.sh <tree>        # every suite, each with the environment it documents
+python3 packaging/scan-identifiers.py .    # the public surface: repo, tarball assets, release bodies
+python3 packaging/redact-releases.py --dry-run   # redact the notes of releases older than the current one
+```
+
+`run-suites.sh` exists because handing every suite the same environment produces a false failure:
+`updater_e2e_check` drives the real CLI, so it must run with `WPT_NO_UPDATE_CHECK` **unset**, and it
+is skipped rather than failed when there is no built release to test against. `scan-identifiers.py`
+checks three places, only one of which a `.gitignore` covers — the tracked files, the published
+tarballs, and the GitHub release *bodies*, which are published prose that no scrub reaches.
+
 `tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It
 pins the six defects a review reproduced on 2026-09-27 - an uninstall pre-check whose worker raised
 (silently, with its button left disabled), a background downloads scan that fell through to the
