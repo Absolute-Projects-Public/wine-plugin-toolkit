@@ -35,8 +35,8 @@ actually happens"* found defects that rounds without it did not.
 ## How to run things
 
 ```bash
-bash packaging/run-suites.sh <tree>          # every suite, each with the environment it documents
-python3 packaging/scan-identifiers.py .      # the public surface, for identifiers
+bash packaging/run-suites.sh .             # every suite, each with the environment it documents
+python3 packaging/scan-identifiers.py . --assets ./dist # tracked repo, tarballs, release notes
 ```
 
 - The GUI suites need PySide6 and must run on a machine that has it. A host without PySide6 can run

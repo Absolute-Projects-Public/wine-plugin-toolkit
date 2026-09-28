@@ -8,7 +8,10 @@ Three places matter, and a `.gitignore` only covers one of them:
   * the GitHub release *bodies*, which are published prose that no scrub reaches and which stay
     public for every past version.
 
-    python3 packaging/scan-identifiers.py [repo] [--assets DIR]
+    python3 packaging/scan-identifiers.py [repo] --assets DIR
+
+Without --assets, tarball scanning is SKIPPED and is never reported as clean. An empty assets
+directory and a tar member above 4 MB fail closed rather than silently certifying an incomplete scan.
 
 Findings are printed as *patterns* by name, not as surrounding text, so a report can say what was
 exposed without repeating it.
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -65,9 +69,9 @@ def hits(text: str, prose: bool = False) -> list[str]:
 
 
 def tracked_files(repo: Path) -> list[Path]:
-    out = subprocess.run(["git", "-C", str(repo), "ls-files"],
-                         capture_output=True, text=True).stdout.split()
-    return [repo / name for name in out]
+    proc = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"],
+                          capture_output=True, check=True)
+    return [repo / os.fsdecode(name) for name in proc.stdout.split(b"\0") if name]
 
 
 def scan_files(repo: Path) -> list[tuple[str, list[str]]]:
@@ -89,11 +93,17 @@ def scan_tarballs(assets: Path | None) -> list[tuple[str, list[str]]]:
     report = []
     if not assets or not assets.is_dir():
         return report
-    for tarball in sorted(assets.rglob("*.tar.gz")):
+    tarballs = sorted(assets.rglob("*.tar.gz"))
+    if not tarballs:
+        return [(str(assets), ["no tarballs found"])]
+    for tarball in tarballs:
         try:
             with tarfile.open(tarball) as tf:
                 for member in tf.getmembers():
-                    if not member.isfile() or member.size > 4_000_000:
+                    if not member.isfile():
+                        continue
+                    if member.size > 4_000_000:
+                        report.append((f"{tarball.name}:{member.name}", ["unscanned: over 4 MB"]))
                         continue
                     handle = tf.extractfile(member)
                     if handle is None:
@@ -138,6 +148,8 @@ def main() -> int:
 
     repo = Path(args.repo).resolve()
     assets = Path(args.assets).expanduser() if args.assets else None
+    if assets is not None and not assets.is_dir():
+        parser.error(f"--assets directory does not exist: {assets}")
     failures = 0
 
     for label, report in (
@@ -146,6 +158,12 @@ def main() -> int:
         ("release bodies", [] if args.no_releases else scan_releases(args.repo_slug)),
     ):
         print(f"=== {label} ===")
+        if label == "tarball assets" and assets is None:
+            print("  SKIPPED: pass --assets DIR to inspect tarballs")
+            continue
+        if label == "release bodies" and args.no_releases:
+            print("  SKIPPED: --no-releases was selected")
+            continue
         if not report:
             print("  nothing identifying found")
             continue

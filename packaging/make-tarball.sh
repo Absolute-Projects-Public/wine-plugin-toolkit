@@ -4,6 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+items=(wpt tests packaging README.md TESTING.md CONTRIBUTING.md CHANGELOG.md LICENSE pyproject.toml PKGBUILD docs)
+git rev-parse --is-inside-work-tree >/dev/null || { echo "release builder needs a git checkout" >&2; exit 2; }
+if [ -n "$(git status --porcelain --untracked-files=all -- "${items[@]}")" ]; then
+    echo "release input is dirty: commit or remove changes under the shipped paths first" >&2
+    exit 2
+fi
+
 VERSION=$(sed -n 's/^pkgver=//p' PKGBUILD)
 NAME="wpt-$VERSION.tar.gz"
 mkdir -p dist
@@ -17,12 +24,10 @@ trap 'rm -rf "$STAGE"' EXIT
 ROOT="$STAGE/wine-plugin-toolkit-$VERSION"
 mkdir -p "$ROOT"
 
-# What ships: the package, the tests, the packaging scripts, and the documents written for whoever
-# uses it. PROJECT.md and HANDOVER.md are deliberately NOT here - they are the working record, and
-# they contain machine-specific paths and notes that do not belong in a release.
-for item in wpt tests packaging README.md TESTING.md CONTRIBUTING.md CHANGELOG.md LICENSE pyproject.toml PKGBUILD docs; do
-    cp -r "$item" "$ROOT/"
-done
+# Ship only committed inputs. Recursive copying of the working tree silently included untracked
+# files under docs/tests/etc, even though PROJECT.md and HANDOVER.md themselves were excluded.
+# Requiring clean inputs and archiving HEAD also ties every release byte to a reviewable commit.
+git archive --format=tar HEAD -- "${items[@]}" | tar -xf - -C "$ROOT"
 find "$ROOT" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
 find "$ROOT" -name '*.pyc' -delete 2>/dev/null || true
 

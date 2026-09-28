@@ -2,8 +2,8 @@
 # Build and install-check an unreleased tree, locally.
 #
 # PKGBUILD builds from the source tarball attached to the GitHub release (correct for everyone else,
-# and its hash is pinned there). For a working tree, this stages the same tarball under the name the
-# PKGBUILD declares and skips the checksum, because the release the hash refers to does not exist yet.
+# and its hash is pinned there). For a clean committed tree, this stages the same tarball under the
+# name PKGBUILD declares and skips the checksum, because the release it refers to may not exist yet.
 set -eu
 cd "$(dirname "$0")/.."
 VERSION=$(python3 -c "import sys; sys.path.insert(0,'.'); import wpt; print(wpt.__version__)")

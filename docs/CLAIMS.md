@@ -111,8 +111,11 @@ Wine, or the GUI running with PySide6. The maintainer re-read `README.md:314–3
   gate now requires caveats in specific sections, checks README/TESTING/Python literal promises,
   parses prompted/indented/inline CLI examples, and fails on three deliberately invalid examples.
   This is a **known-pattern guard**, not proof of every sentence.
-- The source tarball builder currently copies directories from the working tree, including possible
-  untracked files. A reviewer built a temporary 0.6.4 tarball that did not match the published pin.
-  **Do not publish that artefact as 0.6.4**. Before a release, derive the payload from a clean,
-  committed tree, scan the candidate, then cut a new version and re-pin; no new tarball is published
-  by this documentation pass.
+- The source tarball builder previously copied directories from the working tree, including possible
+  untracked files. A follow-up red test showed it built successfully with a private draft under
+  `docs/` (the old `cp -r` included that directory).
+  `make-tarball.sh` now refuses dirty inputs and archives only `HEAD`; a disposable git fixture
+  tested clean build, untracked draft, and uncommitted edit. `release.sh` also refuses a mismatched
+  pin and an existing local/remote tag (tested with isolated fixtures and a live read-only 0.6.4
+  lookup). **Do not publish a rebuilt 0.6.4 asset**. The next version still needs the complete
+  release gate and candidate scan; no new tarball was published by this pass.

@@ -2,13 +2,14 @@
 # Publish a release: build the artefacts, then print exactly what to do with the pieces.
 #
 # Order matters, and it is why this script exists:
-#   1. Everything that ships must be final FIRST - including this file, packaging/build-local.sh and
-#      the PKGBUILD - because they are all inside the tarball.
+#   1. Commit every shipped file FIRST. make-tarball.sh now refuses dirty input and archives HEAD,
+#      so a working-tree copy (including untracked files under docs/tests) cannot become a release.
 #   2. Build the tarball and take its sha256.
-#   3. Put that hash in the PKGBUILD's sha256sums (the line is replaced with SKIP inside the tarball,
-#      so pinning it does not change the tarball - that is what makes this a fixed point).
-#   4. Build the Arch package from that tarball.
-#   5. Commit, tag v<version>, push, and attach the assets to a GitHub release.
+#   3. Put that hash in PKGBUILD's sha256sums and commit the pin. The tarball's PKGBUILD replaces
+#      the pin with SKIP; rebuilding from the pin commit must yield the SAME tarball hash.
+#   4. Build the Arch package, run the release gate from the extracted tarball, then tag/push.
+# gh must be authenticated and reachable to prove the version is not already published; an
+# unavailable gh or unexpected API response stops here rather than guessing from local tags.
 #
 # The package asset is the one that matters to `wpt update`: every release must attach
 # wine-plugin-toolkit-<version>-1-any.pkg.tar.zst or the updater has nothing to install.
@@ -18,6 +19,21 @@ cd "$(dirname "$0")/.."
 VERSION=$(python3 -c "import sys; sys.path.insert(0,'.'); import wpt; print(wpt.__version__)")
 REPO="Absolute-Projects-Public/wine-plugin-toolkit"
 TARBALL="dist/wpt-$VERSION.tar.gz"
+if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+    echo "refusing to publish $VERSION: tag already exists; choose a new version" >&2
+    exit 2
+fi
+if ! command -v gh >/dev/null; then
+    echo "cannot verify remote release tags: gh is unavailable; refusing to publish" >&2
+    exit 2
+fi
+if remote_tag=$(gh api "repos/$REPO/releases/tags/v$VERSION" --jq '.tag_name' 2>&1); then
+    echo "refusing to publish $VERSION: already published as $remote_tag" >&2
+    exit 2
+elif [[ "$remote_tag" != *"HTTP 404"* ]]; then
+    echo "cannot verify whether v$VERSION is already published; refusing to publish" >&2
+    exit 2
+fi
 
 echo "==> building the source tarball"
 bash packaging/make-tarball.sh
@@ -28,7 +44,8 @@ echo
 if [ "$HASH" != "$PINNED" ]; then
     echo "==> the tarball hash has changed; pin it before building the package:"
     echo "      sha256sums=('$HASH')"
-    echo "    (a file that ships was edited after the last build)"
+    echo "    commit that pin, run this script again, and confirm the hash is unchanged"
+    exit 2
 else
     echo "==> PKGBUILD already pins this tarball: $HASH"
 fi
@@ -49,8 +66,8 @@ cat <<EOF
             > "wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst.sha256" )
 
 ==> publish
-  1. git add -A && git commit
-  2. git tag -a v$VERSION -m "wpt $VERSION" && git push origin main --tags
+  1. confirm the clean committed tree, fixed-point pin, and full extracted-tarball gate
+  2. git tag -a v$VERSION -m "wpt $VERSION" && push fast-forward from the publishing machine
   3. create the GitHub release for v$VERSION and attach:
        $TARBALL                     (source)
        dist/wpt-$VERSION.tar.gz.sha256

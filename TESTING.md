@@ -189,6 +189,8 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 python3 tests/test_core.py                              # pure logic, no prefix needed
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
 python3 tests/readme_claims_check.py                    # mechanical README claims, not an MSI proof
+python3 tests/scanner_check.py                          # filenames with spaces / missing assets fail closed
+python3 tests/tarball_source_check.py                   # clean committed inputs / pin and tag guards
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and runs every tab (needs PySide6)
 QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab behaviours
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
@@ -204,10 +206,15 @@ Three of the checks that matter most now ship with the project instead of living
 workspace, because a reviewer should be able to run them too:
 
 ```bash
-bash packaging/run-suites.sh <tree>        # every suite, each with the environment it documents
-python3 packaging/scan-identifiers.py .    # the public surface: repo, tarball assets, release bodies
+bash packaging/run-suites.sh .             # every suite, each with the environment it documents
+python3 packaging/scan-identifiers.py . --assets ./dist # tracked repo + tarballs + release bodies
 python3 packaging/redact-releases.py --dry-run   # redact the notes of releases older than the current one
 ```
+
+`scan-identifiers.py` marks tarballs **SKIPPED** unless `--assets` points at a directory with at least
+one source tarball; it fails closed on unreadable or oversized members. A clean result is only for
+the surfaces actually scanned, and the current 0.6.4 release body contains an allowed quoted error
+that still appears as a finding for review.
 
 `run-suites.sh` exists because handing every suite the same environment produces a false failure:
 `updater_e2e_check` drives the real CLI, so it must run with `WPT_NO_UPDATE_CHECK` **unset**, and it
