@@ -39,6 +39,10 @@ def check(label: str, got, want) -> None:
 def main() -> int:
     app = QApplication([])
     window = MainWindow()
+    if window.env is None:
+        print("FAIL: scratch HOME has no detected Wine environment")
+        window.close()
+        return 1
     app.processEvents()
     window.refresh_downloads()
     for _ in range(60):

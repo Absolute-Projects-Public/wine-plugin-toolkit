@@ -2,8 +2,11 @@
 
 `wpt` installs, repairs, inventories and removes **Windows audio plugins in an ableton-linux style Wine
 prefix**, the shape used when a vendor's installer refuses to run under Wine. It unpacks the vendor MSI
-with `msitools` and places the payload itself. **Current size checks are incomplete** for duplicate
-basenames and bundle internals; `ok` is not a per-file payload audit. See [the claim ledger](docs/CLAIMS.md).
+with `msitools` and places the payload itself. Full-path MSI rows cover duplicate basenames and bundle
+internals. Inventory and repair remain size-based; `ok` is not a content hash or proof a component was
+selected. Install plans reject unsupported component conditions/attributes, and direct removal preserves
+component-state-uncertain files.
+See [the claim ledger](docs/CLAIMS.md).
 
 Install, uninstall and Wine wrapper paths can change files. Use `--dry-run` where offered and a disposable
 prefix for tests. A dry-run flag is not by itself proof that an external vendor program has no side effects.
@@ -39,7 +42,7 @@ All of these are read-only. Run them and keep the output:
 
 ```bash
 wpt env          # does it find your Wine tree, prefix, Windows user and plugin directories?
-wpt list         # inventory: matched names' sizes checked against cached MSIs, with known limits
+wpt list         # inventory: full-path sizes checked against cached MSIs, not file hashes
 wpt scan         # registry vs disk: installs that registered but never copied their files
 wpt products     # triage of every Wine prefix on the machine, newest install first
 wpt presets      # your presets and downloaded packs, per product
@@ -53,7 +56,8 @@ failure this tool exists for, send that output.
 ## What to report back
 
 - your distro, Python and Wine-tree version (`wpt env` shows both, plus the toolkit version)
-- the output of `wpt list --json` and `wpt products --json`, machine-readable and safe to paste
+- the output of `wpt list --json` and `wpt products --json` **after** redacting usernames,
+  home paths and private details; JSON can contain local paths
 - anything that crashed, with the traceback
 - whether the GUI opened and every tab rendered
 
@@ -67,11 +71,13 @@ wpt catalogue --open "nolly"                   # open that plugin's download pag
 wpt install <some>.msi --dry-run               # preview prefix changes; scratch may be written
 wpt install <something>.exe --dry-run          # vendor .exe: see how it would get to an MSI
 wpt disable Nolly --dry-run                    # hide a plugin from the DAW scanner (reversible rename)
-wpt uninstall --product <X> --dry-run --purge  # planned targets/registry, not nested files or Wine effects
+wpt uninstall --product <X> --dry-run --purge  # mapped File-table files/registry, not Wine effects
 ```
 
-Read `wpt uninstall --dry-run` output carefully before ever running it for real: it lists planned
-destinations (a directory is one row), not every nested file or possible Wine side effect.
+Read `wpt uninstall --dry-run` output carefully before ever running it for real: it shows eligible
+mapped File-table files and known refusal reasons, not every user file Wine might remove or every
+possible vendor side effect. A registered uninstall may stop before `msiexec` when the MSI payload
+bytes are unavailable, a cached ownership scan is incomplete, or another product claims a planned path.
 `--purge` also previews the registry entries it would target.
 
 ## The `.exe` question
@@ -120,10 +126,10 @@ exactly why it does not try to fetch anything itself.
 
 | verdict | meaning |
 |---|---|
-| `ok` | its basename matched an expected MSI size; duplicate names can misattribute the match |
-| `unverified` | no MSI that describes this file was found, so there is nothing to compare it with, `wpt find-msi` shows which MSIs it can see |
+| `ok` | this full file path's byte size matches one unambiguous MSI File row; content hashes are not checked |
+| `unverified` | no unique mapped MSI owner/size; `wpt find-msi` shows which MSIs it can see |
 | (not listed) | executables in `Program Files` that no plugin MSI describes. Wine's own tools and other vendors' helpers. Counted in one line; `wpt list --all-standalone` lists them |
-| `BROKEN` | the matched size disagrees; compare the path/owner before using repair, as matches can be ambiguous |
+| `BROKEN` | this full path's byte size disagrees; repair may preserve an existing no-clobber preset |
 
 `unverified` is not a failure. It means the toolkit has no reference for the file, commonly because the
 product was installed by hand, or by a wrapper that kept its MSI somewhere unusual.
@@ -148,23 +154,28 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 
 ## Cautions
 
-- **Presets**: both CLI and GUI currently call `msiexec /x` **then** rescue **then** their own file
-  deletion (`wpt/cli.py:654–698`, `wpt/gui.py:1214–1240`). The GUI has no `--files-only` option.
-  The rescue recognises some user presets and downloaded packs and stores them
-  under `~/.local/share/wpt/presets/<product>/<timestamp>/`, but cannot undo any earlier vendor deletion;
-  planned directories are later removed recursively (`wpt/installer.py:530–569`). Back up first. On
-  the CLI, `--files-only` skips Wine's `msiexec` step; `--no-rescue` skips the toolkit's rescue too.
+- **Presets and user files**: both CLI and GUI rescue before `msiexec /x`. WPT strictly enumerates and
+  attempts to copy regular files under planned no-clobber paths and recognized Roaming/MIDI XML maps;
+  unreadable/incomplete traversals, detected symlinks, unsupported file types or copy failures stop
+  removal. Candidate-name lookup and uninspected RemoveFile/custom actions do not prove complete discovery.
+  Direct WPT removal preserves no-clobber files in place, changed files, shared paths, and components
+  whose installed state cannot be proved. Other vendor-created files may not be recognised, and Wine
+  can still affect them or host-mapped paths; back up first. The
+  GUI has no `--files-only` option; on the CLI it skips Wine's `msiexec` step. `--no-rescue` skips that
+  CLI backup.
 - **Activations**: deleting files does not free an iLok/PACE activation. Deactivate in iLok License
   Manager first, or use *Report as Unusable* there if the location is unreachable.
-- **Uninstall routes through `msiexec /x` first**, which is a no-op on prefixes where the product was
-  never registered with Windows Installer. That is expected, not a bug: the file-level step does the work.
-  It also deletes Windows Installer's cached copy of the MSI, which is why the toolkit reads everything it
-  needs from that MSI *before* running it, and why a product uninstalled that way can have no MSI left
-  afterwards. If you then ask the toolkit to remove it again it will tell you what the prefix still holds
-  under that name instead.
-- **Dry-run scope**: `uninstall --dry-run` still stages the MSI and extracts into scratch. It previews
-  planned destinations, not individual files in a directory and not the side effects of a real Wine
-  uninstall. A directory destination includes any extra files you put beneath it; back those up first.
+- **Registered uninstall**: WPT reads the MSI before `msiexec /x`, which may remove Windows Installer's
+  cached copy. The default registered route stops before vendor removal when payload bytes or cached
+  ownership cannot be verified, the selected MSI has an unmapped root, fallback Manufacturer/ProductName
+  path components are unsafe, or another cached product claims a planned path. After a zero `msiexec`
+  exit it also requires registration to be gone and readable before direct removal or purge.
+  Unregistered products skip `msiexec`; the file-only path removes only eligible payload-backed files.
+- **Dry-run scope**: `uninstall --dry-run` still stages the MSI and extracts into scratch. It shows mapped
+  file actions and known refusal reasons, not every external effect of a real Wine uninstall. A directory
+  destination can contain files beyond the plan; back those up first. The explicit `--no-files` option
+  bypasses WPT's plan, rescue, and shared-file ownership checks but still invokes Wine when registered;
+  `msiexec /x` can remove files another product claims.
 - Scope for this version: **only** the ableton-linux style prefix. Steam/Lutris/Bottles prefixes are
   triaged (read-only in `wpt products`) but never written to.
 
@@ -178,6 +189,14 @@ the toolkit placed itself (which leaves no MSI behind) still shows as installed,
 - A wrapper whose payload is a **bare plugin tree** rather than an MSI (no `VST3DIR`/`VSTDIR` layout either)
   cannot be installed by this tool: it installs from MSIs, and it says so rather than copying files it
   cannot verify against a `File` table.
+- MSI rows from source-only, optional, conditioned, shared-reference, permanent, transitive, `Shared`
+  or `NeverOverwrite` components are not treated as proof of installed ownership. Install planning
+  refuses unsupported component semantics; direct uninstall preserves those paths as leftovers.
+- Cross-product ownership includes mapped application/driver roots and can inspect non-plugin MSI
+  records in Windows Installer's cache. An unreadable or unmapped cached MSI blocks registered
+  removal conservatively; a failed `msiexec` also prevents direct file removal and registry purge.
+- Preset rescue prefers the selected MSI's Manufacturer for its ProgramData tree. Existing files in a
+  no-clobber destination without a successful rescue result stop the uninstall before `msiexec`.
 - `uninstall --purge` removes the product's own registration entries and stale pointers to its files; it
   leaves unrelated vendor cache keys alone.
 - `scan`'s "plugins present" list can include plugin support dlls (Qt's `qwindows.dll` lives in plugin
@@ -190,14 +209,36 @@ python3 tests/test_core.py                              # pure logic, no prefix 
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
 python3 tests/readme_claims_check.py                    # mechanical README claims, not an MSI proof
 python3 tests/scanner_check.py                          # filenames with spaces / missing assets fail closed
-python3 tests/tarball_source_check.py                   # clean committed inputs / pin and tag guards
-QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # builds the GUI and runs every tab (needs PySide6)
+python3 tests/tarball_source_check.py                   # reproducible archive / dirty, version, pin and tag guards
+python3 tests/version_consistency_check.py              # runtime, project, package and changelog versions agree
+python3 tests/package_data_check.py                     # wheel configuration includes catalogue and icons
+QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # every tab, fixture-backed catalogue refresh, clean close
 QT_QPA_PLATFORM=offscreen python3 tests/gui_downloads_check.py   # Download tab behaviours
 QT_QPA_PLATFORM=offscreen python3 tests/gui_update_check.py      # the update check, with the network and the dialogs stubbed
+QT_QPA_PLATFORM=offscreen python3 tests/gui_env_redetect_guard_check.py # Re-detect cannot switch prefixes while a worker is retained
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_decline_check.py # declined jobs must not leave dead buttons
 QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that dies must not leave a dead button either
+QT_QPA_PLATFORM=offscreen python3 tests/gui_refresh_repro.py     # overlapping refresh is declined without losing the first
+QT_QPA_PLATFORM=offscreen python3 tests/gui_startup_close_check.py # delayed catalogue callback must not run after close
+python3 tests/standalone_launch_check.py                          # unique match, prefix containment, custom Wine env; Popen mocked
+QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py # menu labels/availability; launch is mocked
 python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
-python3 tests/tables_plan_check.py                              # a removal read from the MSI's tables instead of its payload
+python3 tests/preset_collision_check.py                         # changed preset in the same minute cannot overwrite a rescue
+python3 tests/uninstall_safety_check.py                         # CLI gates, unmapped roots, registration and rescue ordering
+python3 tests/uninstall_race_safety_check.py                    # parent symlink swap cannot redirect File-table unlink
+QT_QPA_PLATFORM=offscreen python3 tests/gui_uninstall_safety_check.py # GUI gates/rescue ordering; requires PySide6
+python3 tests/cross_product_ownership_check.py                  # shared/ambiguous cached MSI owners fail closed
+python3 tests/no_clobber_provenance_check.py                    # no-clobber provenance, repair preservation and rescue (11/11)
+python3 tests/component_ownership_check.py                      # component conditions/flags preserve uncertain files
+python3 tests/tables_plan_check.py                              # table-only removal preserves unverified payloads
+python3 tests/msi_table_header_check.py                         # msiinfo third metadata line is not a data row
+python3 tests/msi_manifest_check.py                             # Directory/Component/File mapping and basename collisions
+python3 tests/file_plan_check.py                                # exact paths, mixed-case roots, repair and payload refusal
+python3 tests/plan_root_safety_check.py                         # root traversal, unmapped TARGETDIR and Program Files mapping
+python3 tests/unowned_directory_check.py                        # unowned/modified files survive a planned bundle removal
+python3 tests/casefold_manifest_check.py                        # case variant and ambiguous case collision
+python3 tests/inventory_manifest_check.py                       # same basename in two MSIs has separate owner/size
+python3 tests/registry_manifest_check.py                        # purge cannot take an unowned user's registry pointer
 python3 tests/wrapper_display_check.py                          # a wrapper whose window could not appear is refused, not launched
 WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py # the updater against built release artefacts
 ```
@@ -207,7 +248,7 @@ workspace, because a reviewer should be able to run them too:
 
 ```bash
 bash packaging/run-suites.sh .             # every suite, each with the environment it documents
-python3 packaging/scan-identifiers.py . --assets ./dist # tracked repo + tarballs + release bodies
+python3 packaging/scan-identifiers.py . --assets ./dist # tracked repo + local tarballs + release bodies
 python3 packaging/redact-releases.py --dry-run   # redact the notes of releases older than the current one
 ```
 
@@ -219,8 +260,9 @@ that still appears as a finding for review.
 `run-suites.sh` exists because handing every suite the same environment produces a false failure:
 `updater_e2e_check` drives the real CLI, so it must run with `WPT_NO_UPDATE_CHECK` **unset**, and it
 is skipped rather than failed when there is no built release to test against. `scan-identifiers.py`
-checks three places, only one of which a `.gitignore` covers — the tracked files, the published
-tarballs, and the GitHub release *bodies*, which are published prose that no scrub reaches.
+checks three places, only one of which a `.gitignore` covers — the tracked files, tarballs supplied
+through `--assets`, and GitHub release *bodies* fetched from the API, which are published prose that
+no scrub reaches.
 
 `tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It
 pins the six defects a review reproduced on 2026-09-27 - an uninstall pre-check whose worker raised
@@ -229,6 +271,44 @@ synchronous msitools walk on the GUI thread, the empty-state note going missing 
 emptied, `find_msis` reading the prefix on the GUI thread, Enable/Disable racing a running job, and
 the preset-source note being both unreadable on a dark desktop and blank until the dropdown was
 touched. Each fix has a check here, so a regression fails the suite rather than a screenshot.
+
+`tests/gui_startup_close_check.py` closes a window immediately after showing it, then runs Qt's event
+loop past the startup timer deadline while intercepting the delayed catalogue callback. It fails if the
+callback reaches the closed window, without allowing a network request or background scan to start.
+It also fails quickly if the disposable HOME has no detected Wine environment, rather than hanging on
+a modal warning. `gui_env_redetect_guard_check.py` ensures the selected environment cannot change while
+background work is retained; the job closures also capture that environment before starting.
+
+`tests/standalone_launch_check.py` verifies exact/near-miss names, case-only ambiguity, disabled and
+non-plugin entries, outside-prefix and symlinked leaf/ancestor paths, `..` refusal, MSI-owner mismatch,
+fail-closed launch-size changes, custom-Wine environment sanitization, absolute and fallback XDG log
+placement, failed-Popen log cleanup, missing runtime, output capture and asynchronous reaping. Process
+creation is mocked. `tests/gui_plugin_context_menu_check.py` drives an offscreen PySide window and checks
+visible labels/warnings, second-launch blocking, process-group success/error paths, Escape-safe and
+re-entrant close handling, update-restart blocking, prefix-write guards on install, repair, uninstall,
+enable/disable and pending wrappers, allowed dry-run preview, launch errors, mocked Browse routing, and
+disposal of both context menus. Neither test starts a vendor application or reaches iLok.
+
+For a **live desktop smoke test**, stage the review tree under an isolated PC scratch directory and use a
+separate HOME/XDG set plus a disposable `WINEPREFIX` containing only inert fixtures. Verify the Environment
+tab resolves the scratch paths, use Plugins → Refresh inventory, close the window normally, then verify the
+exact PID exited and no `python3 -m wpt.gui` process remains. This checks render/refresh/close plumbing only;
+it is not proof of MSI ownership or real-prefix safety. Do not run `wpt-gui-on-desktop.sh` unchanged for this
+test: it kills an existing `python3 -m wpt.gui` process and launches the installed `~/wpt-test` tree.
+
+For remote Wayland tests that open URLs or folders, set a short private `TMPDIR` and explicitly set
+`XDG_SESSION_TYPE=wayland`. A deeply nested scratch `TMPDIR` can make Chromium's Unix-domain socket path
+too long, while an SSH-provided `tty` session type can prevent Nautilus from connecting.
+
+Do not probe the GUI entry point with `python3 -m wpt.gui --help` piped to `head`: the GUI event loop does
+not exit as a help command, so the pipeline can strand a detached Qt process. Use `python3 -c 'import wpt.gui'`
+for a bounded import check, or run the purpose-built GUI test suite.
+
+Historical interactive trials are not a substitute for current automated gates and are not summarized
+here. Keep machine-specific logs, real-prefix observations, screenshots, and user reports in a private
+maintainer record. For release evidence, rerun the exact source snapshot on a disposable prefix and record
+its revision, command, exit status, skip reasons, and local log location; do not carry over a historical
+suite count.
 
 `tests/updater_e2e_check.py` is the release gate for `wpt update`: it stands a GitHub-API-shaped
 stub on localhost, serves the four assets from `dist/`, and then runs the real updater code -

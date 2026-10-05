@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from wpt import installer, msi as msi_mod, presets as presets_mod  # noqa: E402
 from wpt.environment import detect  # noqa: E402
 from wpt.installer import Action, Plan  # noqa: E402
-from wpt.msi import MsiIdentity  # noqa: E402
+from wpt.msi import MsiFileEntry, MsiIdentity  # noqa: E402
 
 checks = 0
 failures: list[str] = []
@@ -98,10 +98,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("including the pack whose folder is not named 'preset'",
           any("Downloaded Pack.xml" in r[1] or "Packs" in r[2] for r in rows), True)
 
-    print("2. those copies really are copies: the removal still deletes the originals")
+    print("2. the rescue is a copy, but an unproven removal cannot delete originals")
     removed = installer.remove_files(plan, env)
-    check("the user's own folder was deleted", user_dir.exists(), False)
-    check("the removal reported it", any(r[0] == "removed" for r in removed), True)
+    check("the user's own folder survives without a File-table manifest", user_dir.exists(), True)
+    check("the removal refused an unproven target", any(r[0] == "refused" for r in removed), True)
     rescued = sorted(p.name for p in Path(saved_for[0][1]).rglob("*.xml"))
     check("and every preset is under ~/.local/share/wpt/presets",
           rescued, ["Downloaded Pack.xml", "My Sound 0.xml", "My Sound 1.xml", "My Sound 2.xml"])
@@ -136,16 +136,19 @@ with tempfile.TemporaryDirectory() as tmp:
     (renamed / "module.bin").write_bytes(b"x" * 128)
     source = root / "bundle-source"
     source.mkdir(exist_ok=True)
+    (source / "module.bin").write_bytes(b"x" * 128)
     plan = Plan(msi=root / "package.msi", identity=MsiIdentity(product_name="X"), expected={},
-                actions=[Action(source=source, dest=bundle, label="VST3DIR")])
+                actions=[Action(source=source, dest=bundle, label="VST3DIR")],
+                owned_files={bundle / "module.bin": MsiFileEntry(
+                    "module", "VST3DIR", Path("Archetype Test X.vst3/module.bin"), 128)})
     check("both names are removal targets",
           [p.name for p in installer._removal_targets(plan.actions[0])],
           ["Archetype Test X.vst3", "Archetype Test X.vst3.disabled"])
     check("the left-behind renamed bundle is visible before the removal",
-          [p.name for p in installer.leftovers(plan, env)], ["Archetype Test X.vst3.disabled"])
+          [str(p) for p in installer.leftovers(plan, env)], [str(renamed / "module.bin")])
     rows = installer.remove_files(plan, env)
     check("and it is removed", renamed.exists(), False)
-    check("reported as a removed directory",
+    check("reported as a removed MSI-owned file",
           [r[0] for r in rows if "disabled" in r[1]], ["removed"])
 
     print("6. two same-named MSIs from different products stage into separate directories")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wine-plugin-toolkit"
-version = "0.6.3"
+version = "0.6.4"
 description = "Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,14 +12,14 @@ license = { text = "MIT" }
 # the core is stdlib-only, so the floor is the oldest Python tested against
 keywords = ["wine", "vst3", "vst2", "msi", "ableton", "audio-plugins"]
 authors = [{ name = "Absolute-Projects-Public" }]
+# the core is stdlib-only: msitools is a system dependency, not a Python one
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit"
 Repository = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit"
 Issues = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/issues"
 Changelog = "https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/blob/main/CHANGELOG.md"
-# the core is stdlib-only: msitools is a system dependency, not a Python one
-dependencies = []
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.5"]
@@ -30,5 +30,8 @@ wpt = "wpt.cli:main"
 [project.gui-scripts]
 wpt-gui = "wpt.gui:main"
 
-[tool.setuptools]
-packages = ["wpt"]
+[tool.setuptools.packages.find]
+include = ["wpt*"]
+
+[tool.setuptools.package-data]
+wpt = ["data/*.json", "data/icons/*.png"]

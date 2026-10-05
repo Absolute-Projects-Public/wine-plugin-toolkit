@@ -16,7 +16,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION=$(python3 -c "import sys; sys.path.insert(0,'.'); import wpt; print(wpt.__version__)")
+# Importing wpt writes __pycache__ on machines without PYTHONDONTWRITEBYTECODE and makes a clean
+# checkout dirty before make-tarball.sh runs. Read the same pkgver the tarball builder uses.
+VERSION=$(sed -n 's/^pkgver=//p' PKGBUILD)
 REPO="Absolute-Projects-Public/wine-plugin-toolkit"
 TARBALL="dist/wpt-$VERSION.tar.gz"
 if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then

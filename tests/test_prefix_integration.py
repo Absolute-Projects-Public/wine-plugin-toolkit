@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     print("repair filter (the manager's core decision)")
     from wpt.installer import Action, Plan
-    from wpt.msi import MsiIdentity
+    from wpt.msi import MsiFileEntry, MsiIdentity
 
     good = env.vst3_dir / "Archetype Test X.vst3"      # 4096 bytes, matches
     bad = env.vst3_dir / "Archetype Wrong X.vst3"      # exists at the wrong size
@@ -138,11 +138,13 @@ with tempfile.TemporaryDirectory() as tmp:
     )
     src = root / "payload"
     src.mkdir()
-    for name in plan.expected:
-        (src / name).write_bytes(b"p")
+    for name, size in plan.expected.items():
+        # The installed Test X bytes are known; the other entries remain size-only fixtures.
+        payload_bytes = b"x" if name == "Archetype Test X.vst3" else b"p"
+        (src / name).write_bytes(payload_bytes * size)
         plan.actions.append(Action(source=src / name, dest=env.vst3_dir / name, label="VST3DIR"))
 
-    todo = installer.filter_needing_repair(plan)
+    todo = installer.filter_needing_repair(plan, env)
     check("only broken files queued for repair", len(todo.actions), 2)
     check("correct-size file skipped", any(a.dest.name == "Archetype Test X.vst3" for a in todo.actions), False)
     check("wrong-size file queued", any(a.dest.name == "Archetype Wrong X.vst3" for a in todo.actions), True)
@@ -234,35 +236,53 @@ with tempfile.TemporaryDirectory() as tmp:
     # one of the plugin's files is currently disabled, which is the name it really has
     installer.set_enabled(env, "Wrong X", enabled=False)
     disabled_wrong = env.vst3_dir / "Archetype Wrong X.vst3.disabled"
-    check("fixture: wrong-size file is disabled", disabled_wrong.exists(), True)
+    disabled_wrong.write_bytes(b"user modified")
+    check("fixture: user-modified file is disabled",
+          disabled_wrong.exists() and disabled_wrong.stat().st_size != 9999, True)
 
-    removal_plan = Plan(
-        msi=Path("/nonexistent/Archetype Test X.msi"),
-        identity=MsiIdentity(product_name="Archetype Test X", manufacturer="Neural DSP"),
-        expected={},
-    )
-    for target in (real, wrong, ghost, outside):
-        removal_plan.actions.append(
-            Action(source=src / target.name, dest=target, label="VST3DIR")
+    def make_removal_plan(targets):
+        result = Plan(
+            msi=Path("/nonexistent/Archetype Test X.msi"),
+            identity=MsiIdentity(product_name="Archetype Test X", manufacturer="Neural DSP"),
+            expected=dict(plan.expected),
         )
+        for target in targets:
+            result.actions.append(Action(source=src / target.name, dest=target, label="VST3DIR"))
+            result.owned_files[target] = MsiFileEntry(
+                target.name, "VST3DIR", Path(target.name),
+                result.expected.get(target.name, target.stat().st_size if target.exists() else 0))
+        return result
 
-    dry = remove_files(removal_plan, env, dry_run=True)
-    check("dry run reports the deletions", len(dry), 4)
+    # One unsafe destination must make the whole operation refuse before any in-prefix unlink.
+    unsafe_plan = make_removal_plan((real, wrong, ghost, outside))
+    unsafe = remove_files(unsafe_plan, env, dry_run=True)
+    check("out-of-prefix destination refuses the whole plan",
+          len(unsafe) == 1 and unsafe[0][0] == "refused", True)
+    check("unsafe plan leaves every fixture untouched",
+          (real.exists(), disabled_wrong.exists(), outside.exists()), (True, True, True))
+
+    safe_plan = make_removal_plan((real, wrong, ghost))
+    dry = remove_files(safe_plan, env, dry_run=True)
+    check("dry run reports the unchanged File-table files", sum(r[0] == "dry-run" for r in dry), 2)
+    check("dry run preserves the modified disabled file",
+          any(r[0] == "refused" and r[1] == str(disabled_wrong) for r in dry), True)
     check("dry run deletes nothing", (real.exists(), disabled_wrong.exists()), (True, True))
 
-    done = remove_files(removal_plan, env)
-    check("deleted the tracked files", (real.exists(), ghost.exists()), (False, False))
-    check("deleted a disabled file under its real name", disabled_wrong.exists(), False)
-    check("refused a path outside the prefix", any(r[0] == "refused" for r in done), True)
+    done = remove_files(safe_plan, env)
+    check("removed the unchanged File-table files", (real.exists(), ghost.exists()), (False, False))
+    check("reported the modified file as preserved",
+          any(r[0] == "refused" and r[1] == str(disabled_wrong) for r in done), True)
+    check("preserved a modified disabled file", disabled_wrong.exists(), True)
     check("outside file untouched", outside.exists(), True)
     check("unrelated plugin untouched", keeper.exists(), True)
-    check("nothing this MSI describes is left", leftovers(removal_plan, env), [])
+    check("leftovers reports the modified MSI-owned file",
+          leftovers(safe_plan, env), [disabled_wrong])
     check("no leftover empty dirs above the deletions", env.vst3_dir.is_dir(), True)
 
     print("purge: registry entries left pointing at deleted files")
     from wpt.installer import purge_registry, stale_registry_edits
 
-    edits = stale_registry_edits(env, removal_plan)
+    edits = stale_registry_edits(env, safe_plan)
     check("finds the values pointing at this product's files",
           sorted(e.value for e in edits if e.value), ["GhostVst3", "InstalledVst3"])
     check("leaves alone a value pointing at another product's file",
@@ -283,8 +303,8 @@ with tempfile.TemporaryDirectory() as tmp:
         + '"Other"="C:\\\\ProgramData\\\\Unrelated Product\\\\User\\\\"\n'
     )
     stale_edits = stale_registry_edits(stale_env, stale_plan)
-    check("purges a stale pointer named after this product",
-          any(e.value == "UserPresets" for e in stale_edits), True)
+    check("does not purge an unproven user-preset pointer based on product name alone",
+          any(e.value == "UserPresets" for e in stale_edits), False)
     check("leaves a stale pointer to another product alone",
           any(e.value == "Other" for e in stale_edits), False)
     check("builds a wine reg delete command",
@@ -355,16 +375,16 @@ with tempfile.TemporaryDirectory() as tmp:
         expected={"Archetype Bundle X.vst3": 512},
     )
     bundle_plan.actions.append(Action(source=src / "bundle", dest=bundle, label="VST3DIR"))
-    rows = verify_plan(bundle_plan)
+    rows = verify_plan(bundle_plan, env)
     check("a bundle is verified by the file inside it, not the directory entry",
           [(r[0], r[2]) for r in rows], [("ok", "512 B")])
 
     inner.write_bytes(b"b" * 999)   # now the binary inside disagrees with the File table
-    rows = verify_plan(bundle_plan)
+    rows = verify_plan(bundle_plan, env)
     check("a wrong-sized binary inside a bundle is still caught", rows[0][0], "size-mismatch")
 
     inner.unlink()
-    rows = verify_plan(bundle_plan)
+    rows = verify_plan(bundle_plan, env)
     check("a bundle whose binary vanished reports missing", rows[0][0], "missing")
 
     print("pending installer -> MSI resolution")

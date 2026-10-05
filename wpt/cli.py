@@ -62,10 +62,11 @@ It does NOT free an activation. Files can be deleted; activations cannot:
   * Otherwise the slot stays consumed and the plugin may refuse to authorise on the
     machine you actually use.
 
-The uninstall may already have affected user files: msiexec /x runs before the
-toolkit's best-effort preset rescue, and planned directories are removed
-recursively. The rescue copies recognised presets only; --no-rescue skips it.
-Use a separate backup before any uninstall, not just this rescue store."""
+The toolkit attempts to rescue recognised presets before msiexec /x and its
+own deletion; a failed copy stops the uninstall. It cannot recognise every
+personal file. Direct removal unlinks only matching File-table files, but Wine's
+msiexec can remove other content. --no-rescue skips the rescue. Keep a separate
+backup before any uninstall."""
 
 
 def _env(args):
@@ -245,7 +246,7 @@ def cmd_install(args) -> int:
         print(f"  {status:8} {path}   {note}")
 
     print("\nverifying against the MSI File table ...")
-    checks = verify_plan(plan)
+    checks = verify_plan(plan, env)
     bad = 0
     for status, path, note in checks:
         if status != "ok":
@@ -510,9 +511,9 @@ def cmd_repair(args) -> int:
         include_standalone=not args.no_standalone,
         include_presets=not args.no_presets,
     )
-    todo = filter_needing_repair(plan)
+    todo = filter_needing_repair(plan, env)
     if not todo.actions:
-        print("no repair actions selected by the current size matcher; this is not a complete file audit")
+        print("no missing or wrong-sized File-table files selected; same-sized edits are not detected")
         return 0
     print(f"{len(todo.actions)} destination(s) missing or wrong size:")
     for action in todo.actions:
@@ -529,7 +530,7 @@ def cmd_repair(args) -> int:
         return 0
 
     print("\nverifying ...")
-    bad = [c for c in verify_plan(todo) if c[0] != "ok"]
+    bad = [c for c in verify_plan(todo, env) if c[0] != "ok"]
     for status, path, note in bad:
         print(f"  {status:14} {path}   {note}")
     if failures or bad:
@@ -631,80 +632,163 @@ def cmd_uninstall(args) -> int:
                 return 4
             print(f"the payload media for {msi.name} is gone:")
             print(f"  {exc}")
-            print("  the file list comes from the MSI's own tables instead - the removal below is")
-            print("  unchanged. Toolkit file removal targets the prefix, but Wine and scratch may")
-            print("  affect other paths. Running the vendor's installer once puts its payload back.")
+            print("  the MSI tables identify paths and sizes, but not installed bytes; WPT will")
+            print("  preserve existing files as leftovers instead of deleting on size alone.")
+            print("  Restore the payload media to verify file contents before removal.")
         else:
-            plan = build_plan(msi, env, scratch, **options)
+            try:
+                plan = build_plan(msi, env, scratch, **options)
+            except (OSError, msi_mod.MsiError) as exc:
+                print(f"cannot build an exact File-table plan from {msi.name}: {exc}", file=sys.stderr)
+                print("  nothing has been touched yet", file=sys.stderr)
+                return 4
         print(f"this MSI describes {len(plan.actions)} destination(s)")
+
+        try:
+            installer_mod.validate_removal_paths(plan, env)
+        except (OSError, msi_mod.MsiError) as exc:
+            print(
+                f"uninstall refused: unsafe or ambiguous planned path ({exc}); no preset rescue, "
+                "msiexec, direct deletion, or registry purge was run.",
+                file=sys.stderr,
+            )
+            return 4
 
     # `msiexec /x` only works if Windows Installer knows the product. Say so up
     # front rather than reporting a removal that never happened: the exit code of
     # msiexec on an unregistered product is not a reliable signal either way.
     registered = scan_mod.is_registered(env, product_code)
+    if (registered and plan is not None and plan.destinations_only
+            and not args.files_only and not args.dry_run):
+        print(
+            "uninstall refused: the MSI payload is unavailable, so installed file contents "
+            "cannot be verified. Wine's msiexec /x may still delete modified files; no preset "
+            "rescue, vendor uninstall, direct deletion, or registry purge was run. Restore the "
+            "payload media, or use --files-only to report the preserved leftovers.",
+            file=sys.stderr,
+        )
+        return 4
+    unmapped_roots = installer_mod.unmapped_destination_warnings(plan) if plan is not None else []
+    if registered and unmapped_roots and not args.files_only and not args.dry_run:
+        print(
+            "uninstall refused: this MSI has file roots with no safe destination; Wine's vendor "
+            "uninstaller may remove those unmapped files. No preset rescue, msiexec, direct deletion, "
+            "or registry purge was run.",
+            file=sys.stderr,
+        )
+        for warning in unmapped_roots:
+            print(f"  {warning}", file=sys.stderr)
+        return 4
+
+    shared_paths: set[str] = set()
+    if plan is not None:
+        warnings_before = len(plan.warnings)
+        shared_paths = inventory_mod.mark_cross_product_claims(plan, env)
+        for warning in plan.warnings[warnings_before:]:
+            print(f"ownership warning: {warning}", file=sys.stderr)
+    if registered and plan is not None and shared_paths and not args.files_only and not args.dry_run:
+        print(
+            "uninstall refused: one or more planned files are also claimed by another cached "
+            "MSI. To avoid Wine's vendor uninstaller deleting shared files, no preset rescue, "
+            "msiexec, direct deletion, or registry purge was run.",
+            file=sys.stderr,
+        )
+        shared_display_paths = sorted(
+            str(path) for path in plan.owned_files
+            if installer_mod.ownership_key(path) in shared_paths
+        )
+        for path in shared_display_paths:
+            print(f"  shared path: {path}", file=sys.stderr)
+        return 4
     if registered:
         print("registered with Windows Installer in this prefix -> msiexec /x")
     else:
         print("not registered with Windows Installer in this prefix:")
         print("  msiexec /x has nothing to remove, so the files have to go directly")
 
-    print("warning: back up your own files first. msiexec /x may run before preset rescue; "
-          "planned directories are removed recursively, including user-added files.")
+    if args.no_files:
+        print("warning: --no-files skips preset rescue and shared-file ownership checks; Wine's "
+              "msiexec /x can still delete files, including shared files owned by other products. "
+              "Back up your own data first.")
+    elif not args.rescue_presets:
+        print("warning: --no-rescue skips preset rescue; back up your own files before uninstall.")
+    else:
+        print("warning: back up your own files first. Preset rescue runs before msiexec /x, "
+              "but the vendor's Wine uninstall may still remove unrecognised files.")
     print("deleting plugin files does not return an iLok activation; deactivate it separately.")
     failures = 0
 
-    if not args.files_only:
+    # Rescue before *any* external uninstall: msiexec /x can itself delete the user's files.
+    # The plan and product identity have already been read and staged above.
+    if not args.no_files and plan is not None and args.rescue_presets:
+        saved, saved_for, looked_at = presets_mod.rescue_for_plan(
+            env,
+            plan,
+            vendor=args.vendor,
+            dry_run=args.dry_run,
+        )
+        failed_rescue = [row for row in saved if row[0] == "failed"]
+        if failed_rescue:
+            print("preset rescue failed; uninstall refused before msiexec or file removal:", file=sys.stderr)
+            for _status, source, detail in failed_rescue:
+                print(f"  {source}: {detail}", file=sys.stderr)
+            return 1
+        if saved:
+            copied = sum(1 for r in saved if r[0] in ("saved", "dry-run"))
+            print(
+                f"\npresets: {copied} file(s) "
+                + ("would be copied" if args.dry_run else "copied")
+                + f", {sum(1 for r in saved if r[0] == 'kept')} already rescued"
+            )
+            for status, source, note in saved[:12]:
+                print(f"  {status:8} {source}   {note}")
+            if len(saved) > 12:
+                print(f"  ... and {len(saved) - 12} more")
+            for _product, rescue_dir in saved_for:
+                print(f"  kept in: {rescue_dir}")
+        else:
+            print("\npresets: nothing found to rescue, and planned destinations may contain user files")
+            print("  looked at: "
+                  + (", ".join(looked_at) if looked_at else "no product folder in this prefix"))
+            print("  if this product keeps your own presets here, rescue them by hand first")
+
+    if not args.files_only and registered:
         code, detail = uninstall_product(env, product_code, dry_run=args.dry_run)
         if detail:
             print(detail)
         if not args.dry_run and code != 0:
-            if registered:
-                failures += 1
-                print(f"msiexec exited {code} although the product was registered", file=sys.stderr)
-            else:
-                print(f"msiexec exited {code}, as expected with no registration to clear")
+            print(f"msiexec exited {code} although the product was registered; "
+                  "direct file removal and registry purge were skipped", file=sys.stderr)
+            return 1
+        if not args.dry_run:
+            try:
+                still_registered = scan_mod.is_registered(env, product_code)
+            except OSError as exc:
+                print(f"could not verify registration after msiexec ({exc}); "
+                      "direct file removal and registry purge were skipped", file=sys.stderr)
+                return 1
+            if still_registered:
+                print("msiexec exited 0 but the product is still registered; "
+                      "direct file removal and registry purge were skipped", file=sys.stderr)
+                return 1
+    elif not args.files_only:
+        print("msiexec skipped: this product is not registered in the selected prefix")
 
-    # The real work on this stack: delete exactly what the MSI's File table placed.
+    # The real work on this stack: remove planned destinations after the rescue and msiexec.
     if not args.no_files and plan is not None:
-        if args.rescue_presets:
-            # Same rule as the GUI: the products to look at come from the plan and the vendor tree,
-            # not from the MSI's ProductName, which can be absent or differ from the folder the
-            # vendor's installer created. `--product` selects an MSI and is not a product name.
-            saved, saved_for, looked_at = presets_mod.rescue_for_plan(
-                env,
-                plan,
-                vendor=args.vendor,
-                dry_run=args.dry_run,
-            )
-            if saved:
-                copied = sum(1 for r in saved if r[0] in ("saved", "dry-run"))
-                print(
-                    f"\npresets: {copied} file(s) "
-                    + ("would be copied" if args.dry_run else "copied")
-                    + f", {sum(1 for r in saved if r[0] == 'kept')} already rescued"
-                )
-                for status, source, note in saved[:12]:
-                    print(f"  {status:8} {source}   {note}")
-                if len(saved) > 12:
-                    print(f"  ... and {len(saved) - 12} more")
-                for _product, rescue_dir in saved_for:
-                    print(f"  kept in: {rescue_dir}")
-            else:
-                # "none found" has to be told apart from "we did not look", and it must not read as
-                # reassurance: the removal below deletes whatever the MSI's File table names.
-                print("\npresets: nothing found to rescue, and the files below are still deleted")
-                print("  looked at: "
-                      + (", ".join(looked_at) if looked_at else "no product folder in this prefix"))
-                print("  if this product keeps your own presets here, rescue them by hand first")
-
         rows = installer_mod.remove_files(plan, env, dry_run=args.dry_run)
         for status, path, note in rows:
             print(f"  {status:8} {path}   {note}" if path else f"  {status:8} {note}")
+        removal_errors = [row for row in rows if row[0] in ("failed", "refused")]
+        if removal_errors:
+            failures += 1
+            print(f"! {len(removal_errors)} file removal(s) failed or were refused", file=sys.stderr)
         if not rows:
             print("  nothing to remove: no file this MSI describes is on disk")
             if registered and not args.files_only:
                 print("  (msiexec removed them itself - a registered product's uninstall does that)")
 
+        remaining: list[Path] = []
         if not args.dry_run:
             remaining = installer_mod.leftovers(plan, env)
             if remaining:
@@ -712,10 +796,13 @@ def cmd_uninstall(args) -> int:
                 print(f"\n! {len(remaining)} path(s) this MSI describes are still on disk:", file=sys.stderr)
                 for path in remaining:
                     print(f"    {path}", file=sys.stderr)
-            else:
-                print("\nno planned destination remains on disk; nested/unowned files are not audited")
+            elif not removal_errors:
+                print("\nno MSI-owned file remains on disk; unowned files were preserved")
 
-        if args.purge:
+        if args.purge and (removal_errors or remaining):
+            print("purge skipped: file removal failed, was refused, or left MSI-owned files behind",
+                  file=sys.stderr)
+        if args.purge and not removal_errors and not remaining:
             print()
             print(PURGE_WARNING)
             edits = installer_mod.stale_registry_edits(env, plan, product_code)
@@ -739,7 +826,7 @@ def cmd_uninstall(args) -> int:
 
     if args.dry_run:
         print("\ndry run: nothing was deleted and no registry entry was changed.")
-        return 0
+        return 1 if failures else 0
     if failures:
         return 1
     print("done. Re-run 'wpt scan' to confirm nothing is left pointing at the removed files.")
@@ -1141,7 +1228,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_rm.add_argument("--scratch", default=DEFAULT_SCRATCH, help=f"extraction dir ({DEFAULT_SCRATCH})")
     p_rm.add_argument("--dry-run", action="store_true")
     p_rm.add_argument("--no-files", action="store_true",
-                      help="only clear the msiexec registration, leave every file in place")
+                      help="skip toolkit deletion; Wine's msiexec may still remove files without a preset rescue")
     p_rm.add_argument("--files-only", action="store_true",
                       help="skip msiexec (the usual case: the product was never registered)")
     p_rm.add_argument("--purge", action="store_true",

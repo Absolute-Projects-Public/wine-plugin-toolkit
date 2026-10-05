@@ -454,7 +454,8 @@ def _fake_extraction(root: Path, dirs: dict[str, list[str]]) -> Path:
             (target / f).write_bytes(b"x")
     return root
 
-_orig_identity, _orig_sizes, _orig_declares = msi_mod.identity, msi_mod.expected_sizes, msi_mod.declares_plugin_payload
+_orig_identity, _orig_sizes, _orig_declares, _orig_manifest = (
+    msi_mod.identity, msi_mod.expected_sizes, msi_mod.declares_plugin_payload, msi_mod.file_manifest)
 _orig_json = None
 try:
     _root = Path(_tf.mkdtemp())
@@ -462,6 +463,13 @@ try:
     _fake_extraction(_root / "driver", {"PFiles64": ["driver.sys", "api.dll"]})
     msi_mod.identity = lambda path, *a, **k: _MsiId(product_name="Thing", manufacturer="NeuralDSP")
     msi_mod.expected_sizes = lambda path, *a, **k: {}
+    msi_mod.file_manifest = lambda path, *a, **k: (
+        [msi_mod.MsiFileEntry(name, root, Path(name), 1) for root, name in
+         (("VST3DIR", "Thing.vst3"), ("APPDIR", "Thing.exe"))]
+        if Path(path).name == "p.msi" else
+        [msi_mod.MsiFileEntry(name, "PFILES64", Path(name), 1)
+         for name in ("driver.sys", "api.dll")]
+    )
     _env_plan = Environment(home=Path("/home/tester"),
                             wine_tree=Path("/home/tester/.local/opt/wine-d2d1-nspa-11.13"),
                             prefix=Path("/home/tester/.wine-ableton"), user="tester")
@@ -479,7 +487,8 @@ try:
     check("--include-app-files places them anyway",
           [a.label.split(" ")[0] for a in _forced.actions], ["PFILES64", "PFILES64"])
 finally:
-    msi_mod.identity, msi_mod.expected_sizes, msi_mod.declares_plugin_payload = _orig_identity, _orig_sizes, _orig_declares
+    msi_mod.identity, msi_mod.expected_sizes, msi_mod.declares_plugin_payload, msi_mod.file_manifest = (
+        _orig_identity, _orig_sizes, _orig_declares, _orig_manifest)
     _shutil.rmtree(_root, ignore_errors=True)
 
 print("msi caches (a product's MSI is not always in its own vendor folder)")
@@ -922,6 +931,7 @@ _good_src.write_bytes(b"payload")
 _good = _installer.Plan(msi=Path("/tmp/x.msi"), identity=None, expected={})
 _good_dest = _conf_env.vst3_dir / "Thing.vst3"
 _good.actions.append(_installer.Action(source=_good_src, dest=_good_dest, label="VST3DIR"))
+_good.owned_files[_good_dest] = msi_mod.MsiFileEntry("thing", "VST3DIR", Path("Thing.vst3"), 7)
 check("an in-prefix install is not affected",
       [r[0] for r in _installer.apply_plan(_good, _conf_env, dry_run=False)], ["copied"])
 check("and the file is there", (_good_dest.exists(), _good_dest.read_bytes()), (True, b"payload"))
@@ -972,21 +982,24 @@ print("repair agrees with verification")
 # A bundle (.vst3 directory) whose inner binary is the wrong size was flagged by verify_plan but
 # skipped by filter_needing_repair, so `wpt repair` said "nothing to do: every file the MSI
 # describes is already present at the right size" about a broken plugin.
-_bundle = Path(_tempfile.mkdtemp()) / "VST3" / "Thing.vst3"
+_verify_root = Path(_tempfile.mkdtemp())
+_verify_env = Environment(home=_verify_root / "home", prefix=_verify_root / "prefix",
+                          user="tester", wine_tree=_verify_root / "tree")
+_bundle = _verify_env.vst3_dir / "Thing.vst3"
 (_bundle / "Contents" / "x86_64-win").mkdir(parents=True)
 _inner = _bundle / "Contents" / "x86_64-win" / "Thing.vst3"
 _inner.write_bytes(b"x" * 999)
 _plan = _installer.Plan(msi=Path("/tmp/whatever.msi"), identity=None, expected={"thing.vst3": 512})
 _plan.actions.append(_installer.Action(source=Path("/tmp/src/Thing.vst3"), dest=_bundle, label="VST3DIR"))
-check("verification sees the wrong size", [r[0] for r in _installer.verify_plan(_plan)], ["size-mismatch"])
-check("and repair now queues it", len(_installer.filter_needing_repair(_plan).actions), 1)
+check("verification sees the wrong size", [r[0] for r in _installer.verify_plan(_plan, _verify_env)], ["size-mismatch"])
+check("and repair now queues it", len(_installer.filter_needing_repair(_plan, _verify_env).actions), 1)
 _inner.write_bytes(b"y" * 512)
-check("an intact bundle verifies", [r[0] for r in _installer.verify_plan(_plan)], ["ok"])
-check("and repair leaves it alone", _installer.filter_needing_repair(_plan).actions, [])
+check("an intact bundle verifies", [r[0] for r in _installer.verify_plan(_plan, _verify_env)], ["ok"])
+check("and repair leaves it alone", _installer.filter_needing_repair(_plan, _verify_env).actions, [])
 _gone = _installer.Plan(msi=Path("/tmp/x.msi"), identity=None, expected={"thing.vst3": 512})
-_gone.actions.append(_installer.Action(source=Path("/tmp/s"), dest=_bundle.with_name("Missing.vst3"),
+_gone.actions.append(_installer.Action(source=Path("/tmp/s"), dest=_verify_env.vst3_dir / "Missing.vst3",
                                        label="VST3DIR"))
-check("a missing destination is still queued", len(_installer.filter_needing_repair(_gone).actions), 1)
+check("a missing destination is still queued", len(_installer.filter_needing_repair(_gone, _verify_env).actions), 1)
 
 print("enable/disable refuses to overwrite")
 _toggle_root = Path(_tempfile.mkdtemp())
@@ -1158,8 +1171,11 @@ try:
 except updates_mod.UpdateError as exc:
     check("a short download is refused", "bytes" in str(exc), True)
 
-# cache and settings live under $HOME-ish paths we can point at a temp dir
+# cache and settings live under XDG paths; point those at the fixture too, even when the suite
+# runner exports shared scratch paths for the rest of the process.
 _home = Path(_tempfile.mkdtemp())
+os.environ["XDG_CACHE_HOME"] = str(_home / ".cache")
+os.environ["XDG_CONFIG_HOME"] = str(_home / ".config")
 check("no cache to begin with", updates_mod.read_cache(_home) is None, True)
 updates_mod.write_cache(_rel, None, home=_home)
 _cached = updates_mod.read_cache(_home)

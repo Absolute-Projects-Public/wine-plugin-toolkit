@@ -121,7 +121,7 @@ print("2. a second background downloads scan never runs on the GUI thread")
 threads: list[int] = []
 
 
-def slow_scan():
+def slow_scan(env: gui_mod.Environment | None = None) -> tuple[set[str], dict[str, Path]]:
     threads.append(threading.get_ident())
     time.sleep(0.5)
     return set(), {}

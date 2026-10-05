@@ -53,7 +53,13 @@ NEW, PREV = _headings[0], _headings[1]
 NEW_TUPLE = tuple(int(part) for part in NEW.split("."))
 PREV_TUPLE = tuple(int(part) for part in PREV.split("."))
 TARBALL = f"wpt-{NEW}.tar.gz"
-PACKAGE = f"wine-plugin-toolkit-{NEW}-1-any.pkg.tar.zst"
+_pkgbuild = (release_dir / "PKGBUILD").read_text()
+_pkgver_match = re.search(r"(?m)^pkgver=(\S+)$", _pkgbuild)
+_pkgrel_match = re.search(r"(?m)^pkgrel=(\d+)$", _pkgbuild)
+if not _pkgver_match or _pkgver_match.group(1) != NEW or not _pkgrel_match:
+    print(f"PKGBUILD in {release_dir} does not match changelog version {NEW} with a package release")
+    sys.exit(2)
+PACKAGE = f"wine-plugin-toolkit-{NEW}-{_pkgrel_match.group(1)}-any.pkg.tar.zst"
 
 ASSETS = [
     TARBALL,

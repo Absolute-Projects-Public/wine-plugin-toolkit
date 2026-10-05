@@ -71,6 +71,7 @@ _settings = Path(tempfile.mkdtemp())
 updates_mod.read_cache = lambda home=None: None        # force the real path each time
 updates_mod.write_cache = lambda *a, **k: None
 updates_mod.latest_release = fake_latest()
+updates_mod.is_arch_family = lambda: True  # exercise the pacman download path on any test host
 updates_mod.config_path = lambda home=None: _settings / "config.json"
 updates_mod.cache_file = lambda home=None: _settings / "update-check.json"
 

@@ -8,8 +8,9 @@
 [![platform](https://img.shields.io/badge/platform-Arch%20%2F%20CachyOS-1793d1)](#install)
 
 Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
-refuses to run, then inspect the files it placed. The current size checks have limitations for
-duplicate names and bundle-internal files; see [verification limits](#how-it-verifies).
+refuses to run, then inspect the files it placed. File-table paths include duplicate basenames and
+bundle internals, but size-based inventory/repair does not detect same-sized edits or establish full
+MSI component selection; see [verification limits](#how-it-verifies).
 
 **Status: 0.6.4. Early, and honest about it.** It is developed against one real stack (Neural DSP
 plugins on CachyOS, Ableton Live 12 via [shibco/ableton-linux](https://github.com/shibco/ableton-linux))
@@ -22,16 +23,18 @@ rather than promised. Bug reports are welcome: `wpt doctor` prints most of what 
 
 - **Installs** a plugin from the vendor's MSI, or from the vendor's `.exe` installer, by unpacking it
   with `msitools` and placing the payload itself.
-- **Checks** sizes at planned destinations whose names match the MSI's `File` table (for a bundle,
-  it may measure one matching inner file).
-  This is not yet a complete check of every placed file (see [verification limits](#how-it-verifies)).
-- **Attempts repair** from a cached MSI for missing files and detected size mismatches. Case, duplicate
-  names and bundles can escape the current size matching; check the result rather than trusting it.
-- **Uninstalls** planned destinations and attempts to rescue recognised presets before its own direct
-  file removal. The CLI currently calls Wine's `msiexec /x` **before** preset rescue, so this is not
-  a guarantee that presets survive the vendor uninstaller. `--files-only` skips that Wine step. A planned
-  directory is removed recursively, including any files added to it later: back up your own data and
-  inspect `--dry-run` before removal (see [uninstall limits](#scope-and-limitations)).
+- **Checks** each selected MSI `File` row at its full destination path, including bundle internals,
+  against its declared byte size. This is not a content-hash or component-state audit (see
+  [verification limits](#how-it-verifies)).
+- **Attempts repair** of missing or wrong-sized File-table files from a cached MSI; preset
+  no-clobber rules can leave a mismatch unresolved, and a same-size edit is not detectable.
+- **Uninstalls** read the MSI before removal and rescue regular files in no-clobber preset paths
+  before Wine's `msiexec /x`. A failed rescue stops the job. The toolkit's direct remover preserves
+  modified files, no-clobber files, known cross-product paths, and files whose MSI component state is
+  uncertain. Registered uninstalls stop before vendor removal when the payload is unavailable, the
+  cached-MSI ownership scan is incomplete, or another cached product claims a planned path.
+  `--files-only` skips Wine on the CLI. Wine's vendor uninstall can still remove other files; back up
+  your data (see [uninstall limits](#scope-and-limitations)).
 - **Inventories** what is installed, and finds installs that registered but never copied their files.
 - **Hides and restores** a plugin from your DAW's scanner without touching anything else.
 - **Attempts Linux extraction first** for recognised 7-Zip, Inno, InstallShield, NSIS, Burn and CAB
@@ -149,8 +152,9 @@ wpt install ~/Downloads/ArchetypeNollyXv1.0.2.exe
 
 `pending` guesses the product and version from the file name, and says whether that version is already
 in the prefix. `install` reads the installer and shows planned destinations (a directory may contain
-more files than the preview lists) before writing them. Add `--dry-run` to preview prefix writes without
-placing plugin files; staging/extraction can still write to scratch.
+more files than the preview lists) before writing them. It refuses to create a second destination
+whose spelling differs only by case. Add `--dry-run` to preview prefix writes without placing plugin
+files; staging/extraction can still write to scratch.
 
 **Your own presets, sounds and MIDI maps.** These are the one thing a reinstall cycle cannot bring
 back. Copy them off the Windows machine (usually `Documents\Neural DSP\...`, or wherever you saved
@@ -162,9 +166,12 @@ wpt presets --export ~/Documents/my-presets     # copy it all out to a plain fol
 ```
 
 Factory and artist presets come back with a reinstall. Yours do not, so back them up before you
-uninstall anything. `wpt uninstall` attempts to copy presets it recognises before **its own** file
-removal and tells you what it found, unless you pass `--no-rescue`. The CLI currently invokes Wine's
-`msiexec /x` earlier; back up your files yourself before any uninstall. `--files-only` avoids `msiexec`.
+uninstall anything. `wpt uninstall` rescues recognised presets and attempts to copy regular files it
+can enumerate under planned no-clobber paths before Wine; a detected symlink or failed copy stops
+removal. When WPT has a readable File-table plan, the CLI and GUI refuse an uninstall before rescue or
+`msiexec` if a planned prefix path is symlinked or case-insensitively ambiguous. WPT cannot prove that every user file was discovered; Wine may delete originals, and other personal files may not be identified. Keep your own backup. `--no-rescue` skips the CLI backup; `--files-only` avoids
+`msiexec` on the CLI. `--no-files` skips the plan/preflight and still delegates to Wine, so its file
+effects are not bounded by WPT.
 
 **Activation and iLok.** Some vendors use iLok (PACE) or an account-based licence. The toolkit
 does not touch licensing, and deleting plugin files never returns a licence slot. If a plugin was
@@ -318,11 +325,11 @@ wpt presets --open "Preset Junkie" --product "Nolly X"
 **Presets are the one thing an install or uninstall cycle cannot bring back.** Factory and artist
 presets come back with a reinstall. Your own (`<product>/User/*.xml`), downloaded packs
 (`<vendor>/<vendor>/<Pack> Presets/`) and hand-made MIDI maps do not. The toolkit attempts to copy
-presets it recognises to `~/.local/share/wpt/presets/<product>/<timestamp>/` before **its own**
-file deletion, without overwriting an existing rescue. Both the CLI and GUI run Wine's `msiexec /x`
-**before** this rescue attempt; the GUI has no `--files-only` equivalent. An MSI or vendor uninstaller
-may therefore remove user data first. Back up your own files before uninstalling and read the
-planned destinations. `--no-rescue` skips the toolkit's rescue; it is not a safety option.
+presets it recognises to `~/.local/share/wpt/presets/<product>/<timestamp>/` before both Wine's
+`msiexec /x` and its own file deletion, without overwriting an existing rescue. A failed rescue
+copy stops the job. The GUI has no `--files-only` equivalent. The toolkit now leaves files outside
+the exact File-table manifest in place, but Wine's `msiexec /x` can still remove them. Back up your
+files before uninstalling. `--no-rescue` skips the toolkit's rescue; it is not a safety option.
 
 The toolkit does not fetch presets from the internet, deliberately: the community repositories want a
 sign-in, one vault sits behind a bot filter, and the shops want money. What it does is open the right
@@ -332,7 +339,7 @@ could not be verified, no search parameter is invented: you get the front page.
 ### Updates
 
 ```bash
-wpt update                # is there a newer release? (cached for a day)
+wpt update                # query the latest release live; add --cached to reuse a saved result
 wpt update --install      # download it, verify it, then print the pacman line
 wpt update --install run  # ...and open a terminal to install it, then reopen the app
 ```
@@ -390,7 +397,11 @@ Six tabs, in the order you use them, each a thin wrapper over the same core func
 - **Plugins**: the inventory. Kind, size, and an integrity verdict against the cached MSI (`ok`,
   `unverified`, `BROKEN`), plus a **State** column for disabled plugins. The buttons act on the
   selected row: *Repair selected from cached MSI*, *Disable (hide from DAW)* or *Enable*, *Uninstall*.
-  Right-click a row for the same actions plus the file's path and this plugin's preset sites.
+  Right-click a row for the same actions plus the file's path, preset sites, **Browse local files** and
+  (when one exact-name `.exe` exists under this prefix's Program Files) **Run in Standalone** through
+  the detected custom Wine tree. Unverified MSI ownership is marked in the action; the app may contact
+  its licensing service. `Program Files (x86)` is not searched. WPT reuses the selected Wine stack for
+  ASIO, but does not install/configure PipeASIO or choose audio devices; set those up in Wine first.
 - **Download**: Neural DSP's catalogue, with version, release date, whether it is installed here and
   whether an installer is already in `~/Downloads`. *Download Selected Plugin* opens its page in your
   browser; the *Preset & IR sources* row opens preset sites for the plugin you have selected.
@@ -408,30 +419,39 @@ A disabled plugin stays visible, flagged `disabled`, so it can be brought back.
 
 ## How it verifies
 
-The toolkit does not take an installer's exit status as proof of correct file placement. Its current
-checks are useful, but **not a complete per-file verification**:
+The toolkit does not take an installer's exit status as proof of correct file placement. On this
+unpublished branch it checks selected File-table paths, but **size is not a content hash**:
 
-- the **plan** uses extracted payload directories and MSI metadata to choose destinations;
-- after writing, `verify_plan` compares sizes for destinations whose **base names** match an MSI
-  `File` table entry. Two entries with the same name but different directories collapse to one
-  expected size; a bundle's internal files can go unchecked (`wpt/msi.py:191-205`,
-  `wpt/installer.py:377-419` in the 0.6.4 code);
-- `BROKEN` in `list` is a detected mismatch, `unverified` means there was no matched MSI size,
-  and `ok` means the **matched name's** size agreed. The current inventory also keys by base name,
-  so `ok` does not certify every file in a product (`wpt/inventory.py:107-175`);
+- the **plan** maps Directory/Component/File rows to full destination paths. Payload builds reject
+  a missing, extra or wrong-sized extracted file before copying; tables-only plans cannot install;
+- `verify_plan` compares each selected File-table file's size, including bundle internals and
+  zero-byte files. Two different rows with one case-insensitive destination are refused;
+- `BROKEN` in `list` is a size mismatch at a full path; `unverified` means there is no unique
+  mapped MSI owner; `ok` means that **one file's size** agrees with its MSI row. It cannot prove
+  its bytes are unchanged or that every optional MSI component was installed;
 - state is cross-checked two ways: the plugin directories (`list`) and the prefix registry (`scan`);
+- GUI **Run in Standalone** requires one exact-name, non-symlink `.exe` under this prefix's Program Files;
+  `Program Files (x86)` is not searched. It uses the detected custom Wine tree and refuses a verified
+  executable if its size changed since inventory (refresh to retry). Logs go to absolute
+  `$XDG_CACHE_HOME/wpt/standalone/`; if it is unset or non-absolute, WPT falls back to
+  `~/.cache/wpt/standalone/`. Logs are retained, not auto-pruned.
+  This GUI blocks writes, second launches and update restarts while the launched Wine process group is alive.
+  Closing WPT requires an explicit **Close anyway** choice; the default and Escape/titlebar dismissal keep it open.
+  Detached helpers/services and apps launched elsewhere are not tracked; close them before prefix writes.
+  Size agreement is not a content hash;
 - `wpt doctor` checks the surrounding environment. GUI suites exercise tabs offscreen on a machine
   with PySide6; they do not replace real-desktop checks.
 
-The correction and acceptance criteria for complete verification are tracked in
-[the claim ledger](docs/CLAIMS.md) and [the design review map](docs/DESIGN.md). Until that work
-passes, do not interpret an `ok` result as a complete MSI payload audit.
+The remaining real-MSI, feature-state and release-artifact acceptance criteria are in
+[the claim ledger](docs/CLAIMS.md) and [the design review map](docs/DESIGN.md). Do not interpret
+an `ok` result as a complete MSI payload audit.
 
 ## Scope and limitations
 
-- Verified end to end against **Neural DSP** installers (Advanced Installer and MSI) on a real
-  `~/.wine-ableton` prefix: inventory sizes matched the MSIs, the scan reported zero missing paths, and
-  `install --dry-run` reproduced the destinations that were previously placed by hand.
+- Earlier 0.6.4 work exercised **Neural DSP** installers (Advanced Installer and MSI) against a
+  real `~/.wine-ableton` prefix. That is historical evidence, **not a real-install or live-uninstall
+  validation of these unpublished manifest changes**. This branch has read-only table/listing
+  comparisons and disposable-prefix tests; no real prefix has been modified to test it.
 - **Wrapper families**: the recorded real-wrapper examples cover a 7-Zip self-extractor (a Neural
   DSP hardware wrapper), WiX Burn bundles (`vc_redist` and `dotnet-runtime`) and Advanced Installer
   (refused as Wine-only). The other named families are code paths, not a claim that a real installer
@@ -454,27 +474,47 @@ passes, do not interpret an `ok` result as a complete MSI payload audit.
   removes the registration and the cache, no MSI may be left to describe the product:
   `wpt uninstall --product X` then
   says so and lists what the prefix still holds under that name, rather than pretending.
-- `uninstall` removes a product two ways: `msiexec /x` attempts to clear the Windows Installer
-  registration, then the toolkit removes each **planned destination**. A destination that is a
-  directory is removed **recursively**, including files the MSI did not originally place
-  (`wpt/installer.py:530-569`); preset rescue recognises some personal files, not necessarily all.
-  **The CLI invokes `msiexec /x` before rescue** (`wpt/cli.py:652-698`). Wine's `msiexec` may also
-  affect a Linux path mapped from the prefix (such as Desktop). Back up
-  user data and inspect `--dry-run`; the GUI also runs `msiexec /x` before rescue and offers no
-  `--files-only` route. On the CLI, use `--files-only` to skip Wine's registration removal. The
-  toolkit then checks for remaining planned paths, **not** each original MSI file. `--no-files` stops after
-  msiexec, `--files-only` skips it, `--purge` also removes the registry entries pointing at the
-  deleted files. `--dry-run` lists planned destinations, not every file inside a directory and not
-  Wine's potential side effects; MSI staging/extraction may still write to scratch. Purging never
-  frees an activation.
+- **Uninstall boundaries.** For a registered product, WPT runs `msiexec /x` only after reading the MSI
+  and passing its payload and cached-owner checks. It refuses the default registered uninstall before
+  vendor removal if payload bytes are unavailable, the selected MSI has an unmapped root, any cached-MSI
+  ownership map is unreadable/unmapped, or another product claims a planned path. Unsafe fallback
+  Manufacturer/ProductName path components also refuse planning. This broad fail-closed scan may block
+  removal because of an unrelated cached MSI. If no product is registered, the CLI and GUI skip
+  `msiexec`. A non-zero
+  `msiexec` result, or a zero exit while registration remains or cannot be read, stops subsequent
+  direct file removal and registry purge. In file-only/unregistered
+  cleanup, WPT compares eligible files with the exact MSI payload bytes and declared size, and preserves
+  modified, no-clobber, shared, and component-state-uncertain files as leftovers. It prunes empty parents,
+  not entire directories. Install plans also refuse optional, conditioned, source-only, shared-reference,
+  permanent, transitive, `Shared` or NeverOverwrite components because component-selection state is
+  unavailable. FeatureComponents/feature-level selection is not modelled. Repair and inventory still
+  use size checks, so same-size edits can remain undetected there.
+  Preset rescue happens before `msiexec`; WPT uses the selected MSI's Manufacturer when locating its
+  ProgramData tree and strictly attempts to copy regular files under planned no-clobber paths and recognized
+  Roaming/MIDI XML paths.
+  Existing no-clobber files without a successful rescue result, traversal/stat errors, detected
+  symlinks, unsupported file types or copy failures stop the job. Roaming/MIDI XML maps are strictly
+  traversed under inferred paths, but product-name lookup and uninspected custom actions do not prove
+  complete discovery; this is not a complete backup guarantee. Wine may still affect other user files or
+  host-mapped paths (such as Desktop). Back up user data and inspect `--dry-run`; the GUI has no
+  `--files-only` route. On the CLI, `--files-only` skips Wine's registration removal and preserves refused
+  paths. `--no-files` skips WPT's plan, removal, and rescue, **but Wine can still delete files**; it
+  also skips shared-file ownership checks, so `msiexec /x` may remove files another product claims.
+  `--no-rescue` also bypasses the CLI backup. `--purge` is gated on successful vendor uninstall and the
+  absence of remaining mapped MSI files; a matching basename or product name alone is not proof.
+  `--dry-run` lists mapped files and known refusals, not every external Wine effect; staging/extraction
+  may still write to scratch. Purging never frees an activation.
 - **Which MSIs the tool can see.** Sizes are cross-checked against the MSIs cached inside the prefix: a
   vendor's own folder (`AppData/Roaming/Neural DSP/...`), `ProgramData/Package Cache`, and **Wine's
   Windows Installer cache** (`drive_c/windows/Installer/`). That last one matters, because a product
   installed by running its vendor wrapper may only leave its MSI there, and without finding it the
-  plugin reads `unverified` and has nothing to repair or uninstall from. Only MSIs that **declare a
-  plugin payload directory** (`VST3DIR`/`VSTDIR`/`AAXDIR`/`APPDIR`/`PREDIR`) are taken from that cache,
-  so the prefix's runtimes (PACE, Wine Mono, Bonjour) neither slow the listing down nor show up as
-  broken plugins.
+  plugin reads `unverified` and has nothing to repair or uninstall from. Routine inventory takes only
+  MSIs that **declare a plugin payload directory** (`VST3DIR`/`VSTDIR`/`AAXDIR`/`APPDIR`/`PREDIR`) from
+  that cache, so runtime MSIs do not slow the listing or appear as plugins. The destructive ownership
+  check also considers non-plugin cached MSIs and mapped application/driver roots, because they may own
+  shared files. An unreadable or unmapped cache record stops a registered uninstall; this conservative
+  scan may be slower and may require manual cache repair. MSIs outside the searched cache locations are
+  not proven absent owners.
 - **The GUI runs one background job at a time.** A running job keeps its reference until it finishes, a
   second request is declined with a line in the log rather than queued, and closing the window waits for
   a running job. Each of those is a crash that was hit for real: Qt aborts the process, with no

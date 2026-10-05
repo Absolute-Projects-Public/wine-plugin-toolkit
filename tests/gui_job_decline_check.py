@@ -45,6 +45,10 @@ QMessageBox.exec = lambda self: 0
 
 app = QApplication.instance() or QApplication([])
 window = gui_mod.MainWindow()
+if window.env is None:
+    window.close()
+    print("FAIL: scratch HOME has no detected Wine environment")
+    sys.exit(1)
 app.processEvents()
 
 # a stand-in for a slow prefix job: it holds the "one at a time" slot for a moment

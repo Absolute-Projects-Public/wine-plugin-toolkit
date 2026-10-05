@@ -2,7 +2,9 @@
 # Build the source tarball the PKGBUILD consumes, then (optionally) makepkg.
 #   bash packaging/make-tarball.sh [--build]
 set -euo pipefail
+umask 022
 cd "$(dirname "$0")/.."
+python3 packaging/check_version.py
 
 items=(wpt tests packaging README.md TESTING.md CONTRIBUTING.md CHANGELOG.md LICENSE pyproject.toml PKGBUILD docs)
 git rev-parse --is-inside-work-tree >/dev/null || { echo "release builder needs a git checkout" >&2; exit 2; }

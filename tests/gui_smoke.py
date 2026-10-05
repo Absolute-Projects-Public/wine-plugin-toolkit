@@ -8,6 +8,7 @@ Run:  QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -16,6 +17,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import wpt.gui as gui  # noqa: E402
+
+_FIXTURE_PAGE = (Path(__file__).resolve().parent / "fixtures" / "neuraldsp-downloads.html").read_text()
+_real_catalogue_fetch = gui.catalogue_mod.fetch
+
+
+def _fixture_catalogue_fetch(_url=None, _timeout=30) -> str:
+    return _FIXTURE_PAGE
+
+
+gui.catalogue_mod.fetch = _fixture_catalogue_fetch
 
 fails = 0
 
@@ -59,6 +70,9 @@ try:
 except Exception:
     traceback.print_exc()
     raise SystemExit("MainWindow construction failed")
+if win.env is None:
+    win.close()
+    raise SystemExit("GUI smoke needs a detected scratch Wine environment")
 
 tabs = win.centralWidget()
 print(f"window title : {win.windowTitle()}")
@@ -98,7 +112,7 @@ check("Download tab: rows rendered",
       lambda: f"{win.download_table.rowCount()} row(s). {win.download_summary.text()[:70]}")
 check("Download tab: an installer in ~/Downloads is matched",
       lambda: f"{len(win._downloads)} found, staged for Pending Install")
-check("Download tab: catalogue can be refreshed from the live page",
+check("Download tab: refresh parses the checked-in page fixture",
       lambda: (win.load_catalogue(refresh=True) or f"{len(win._catalogue.releases)} releases after refresh"))
 
 # Pending Install tab: same discovery call the worker makes
@@ -124,5 +138,24 @@ if msis:
     for line in win.install_log.toPlainText().splitlines()[-6:]:
         print(f"          {line}")
 
+# Exercise the production close path and make teardown an assertion rather than a process-exit race.
+close_accepted = win.close()
+deadline = time.monotonic() + 30
+active = [worker for worker in (*win._workers, *win._update_workers) if worker.isRunning()]
+while time.monotonic() < deadline:
+    app.processEvents()
+    active = [worker for worker in (*win._workers, *win._update_workers) if worker.isRunning()]
+    if not win.isVisible() and not active:
+        break
+    time.sleep(0.01)
+if not win._closing or win.isVisible() or active:
+    fails += 1
+    print(f"FAIL: GUI did not close cleanly; active workers={len(active)}")
+else:
+    if not close_accepted:
+        print("  ok    close was deferred until all QThreads joined")
+    print("  ok    window closed and all QThreads joined")
+
+gui.catalogue_mod.fetch = _real_catalogue_fetch
 print(f"\nGUI smoke: {fails} failure(s)")
 raise SystemExit(1 if fails else 0)

@@ -103,11 +103,21 @@ msi_mod.payload_directories = lambda msi, *a, **k: _TABLE_TREE
 _real_identity = msi_mod.identity
 _real_sizes = msi_mod.expected_sizes
 _real_declares = msi_mod.declares_plugin_payload
+_real_manifest = msi_mod.file_manifest
 msi_mod.identity = lambda msi, *a, **k: MsiIdentity(
     product_name="Thing", manufacturer="Neural DSP", properties={"VST3DIR": r"C:\Program Files\Common Files\VST3"}
 )
 msi_mod.expected_sizes = lambda msi, *a, **k: {}
 msi_mod.declares_plugin_payload = lambda msi, *a, **k: True
+msi_mod.file_manifest = lambda msi, *a, **k: [
+    msi_mod.MsiFileEntry("vst3", "VST3DIR", Path("Thing.vst3"), 900),
+    msi_mod.MsiFileEntry("vst2", "VSTDIR", Path("Thing.dll"), 900),
+    msi_mod.MsiFileEntry("aax", "AAXDIR", Path("Thing.aaxplugin/inside.bin"), 9),
+    msi_mod.MsiFileEntry("app", "APPDIR", Path("Thing.exe"), 900),
+    msi_mod.MsiFileEntry("pdf", "APPDIR", Path("readme.pdf"), 900),
+    msi_mod.MsiFileEntry("artist", "PREDIR", Path("Artists/Nolly Tone.xml"), 900),
+    msi_mod.MsiFileEntry("default", "PREDIR", Path("Default.xml"), 900),
+]
 
 work = Path(tempfile.mkdtemp(prefix="wpt-tables-check-"))
 env = Environment(
@@ -125,7 +135,9 @@ for name, entries in _EXTRACTED_TREE.items():
         if is_dir:
             target.mkdir(parents=True, exist_ok=True)
         else:
-            target.write_bytes(b"x" * 10)
+            target.write_bytes(b"installed" * 100)
+(payload_root / "AAXDIR/Thing.aaxplugin/inside.bin").write_bytes(b"installed")
+(payload_root / "PREDIR/Artists/Nolly Tone.xml").write_bytes(b"installed" * 100)
 
 payload_plan = installer.build_plan(Path("/m/thing.msi"), env, payload_root, include_aax=True)
 tables_plan = installer.build_plan_from_tables(Path("/m/thing.msi"), env, include_aax=True)
@@ -158,7 +170,7 @@ check("while the extracted plan still applies (dry run)",
       [r[0] for r in installer.apply_plan(payload_plan, env, dry_run=True)][:1], ["dry-run"])
 
 print()
-print("and the removal it drives deletes exactly those files")
+print("and table-only removal preserves files because payload bytes are unavailable")
 # Create the installed files exactly where the plan says, with the kind (file or directory) the
 # MSI's tables gave, so a bundle is tested as a bundle rather than as a file with a long suffix.
 _kind: dict[str, bool] = {}
@@ -174,36 +186,43 @@ for _root_name, _entries in _EXTRACTED_TREE.items():
 for dest in _tables_dests:
     path = Path(dest)
     if _kind.get(dest):
-        (path / "inside.bin").parent.mkdir(parents=True, exist_ok=True)
-        (path / "inside.bin").write_bytes(b"installed")
+        child = "inside.bin" if path.name.endswith(".aaxplugin") else "Nolly Tone.xml"
+        (path / child).parent.mkdir(parents=True, exist_ok=True)
+        (path / child).write_bytes(b"installed" if child == "inside.bin" else b"installed" * 100)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"installed" * 100)
 
 dry = installer.remove_files(tables_plan, env, dry_run=True)
-check("a dry run reports every destination", len([r for r in dry if r[0] == "dry-run"]), len(_tables_dests))
+check("a dry run refuses every unverified File-table file",
+      len([r for r in dry if r[0] == "refused"]), len(tables_plan.owned_files))
 check("and deletes none of them", all(Path(d).exists() for d in _tables_dests), True)
 
 rows = installer.remove_files(tables_plan, env)
-check("the real run removes them", [r for r in rows if r[0] == "failed"], [])
-check("nothing is left behind", installer.leftovers(tables_plan, env), [])
+check("the real run refuses unverified deletions",
+      len([r for r in rows if r[0] == "refused"]), len(tables_plan.owned_files))
+check("and leaves every declared file for manual review",
+      set(installer.leftovers(tables_plan, env)), set(tables_plan.owned_files))
 check("the plugin directory itself survives its last file",
       (env.drive_c / "Program Files/Common Files/VST3").is_dir(), True)
-check("but the empty one below it is pruned",
-      (env.drive_c / "Program Files/Common Files/VST3/Thing.vst3").exists(), False)
-check("the bundle directory went with it",
-      (env.drive_c / "Program Files/Common Files/Avid/Audio/Plug-Ins/Thing.aaxplugin").exists(), False)
-check("the preset file the MSI named is gone",
-      (env.drive_c / "ProgramData/Neural DSP/Thing/Default.xml").exists(), False)
+check("the bundle directory is retained for review",
+      (env.drive_c / "Program Files/Common Files/VST3/Thing.vst3").exists(), True)
+check("the AAX bundle is retained for review",
+      (env.drive_c / "Program Files/Common Files/Avid/Audio/Plug-Ins/Thing.aaxplugin").exists(), True)
+check("the preset file named by the MSI is retained for review",
+      (env.drive_c / "ProgramData/Neural DSP/Thing/Default.xml").exists(), True)
 
 # The `.disabled` rename must be covered here too: an uninstall of a disabled plugin has to
 # remove the renamed copy, or it silently stays on disk.
-disabled = Path(_tables_dests[0]).with_name(Path(_tables_dests[0]).name + installer.DISABLED_SUFFIX)
+disabled = Path(_tables_dests[0]) / ("inside.bin" + installer.DISABLED_SUFFIX)
 disabled.parent.mkdir(parents=True, exist_ok=True)
-disabled.write_bytes(b"disabled copy")
-check("a disabled copy is found", [str(p) for p in installer.leftovers(tables_plan, env)], [str(disabled)])
-installer.remove_files(tables_plan, env)
-check("and removed", disabled.exists(), False)
+disabled.write_bytes(b"installed")  # a rename preserves the File-table byte size
+check("a disabled inner copy is included in leftovers",
+      str(disabled) in {str(p) for p in installer.leftovers(tables_plan, env)}, True)
+disabled_rows = installer.remove_files(tables_plan, env)
+check("the disabled copy is refused without payload bytes",
+      any(status == "refused" and str(disabled) in path for status, path, _note in disabled_rows), True)
+check("and remains for manual review", disabled.exists(), True)
 
 
 # Staging must still protect the MSI itself -- an uninstall stages it out of msiexec's reach -- but
@@ -236,6 +255,7 @@ msi_mod.export_table = _real_export_table
 msi_mod.identity = _real_identity
 msi_mod.expected_sizes = _real_sizes
 msi_mod.declares_plugin_payload = _real_declares
+msi_mod.file_manifest = _real_manifest
 
 print()
 if failures:

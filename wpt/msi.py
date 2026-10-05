@@ -60,7 +60,10 @@ def export_table(msi: Path, table: str) -> list[list[str]]:
         if not line.strip():
             continue
         rows.append(line.split("\t"))
-    # first two rows are the column name header and the type header
+    # msiinfo exports names, types, then a table/primary-key metadata row (e.g.
+    # "File\tFile") before any data. Older/fixture output may omit that third row.
+    if len(rows) >= 3 and rows[2] and rows[2][0] == table:
+        return rows[3:]
     return rows[2:] if len(rows) >= 2 else []
 
 
@@ -244,6 +247,119 @@ def _long_name(cell: str) -> str:
     return cell.split("|", 1)[1] if "|" in cell else cell
 
 
+def _target_dir_name(cell: str) -> str:
+    """MSI DefaultDir is Target[:Source]; only its target half is an installed path."""
+    return _long_name(cell.split(":", 1)[0])
+
+
+@dataclass(frozen=True)
+class MsiFileEntry:
+    """One File row with its destination and component installation semantics."""
+    file_key: str
+    root: str
+    relative: Path
+    size: int
+    component_attributes: int = 0
+    component_condition: str = ""
+
+    @property
+    def removal_state_uncertain(self) -> bool:
+        # SourceOnly, Optional, SharedDllRefCount, Permanent, Transitive, NeverOverwrite, and
+        # Shared components may be absent, shared, or deliberately survive uninstall. The File table
+        # alone cannot prove that a same-path file belongs to this product.
+        unverified = 0x0001 | 0x0002 | 0x0008 | 0x0010 | 0x0040 | 0x0080 | 0x0800
+        return bool(self.component_condition.strip() or self.component_attributes & unverified)
+
+    @property
+    def removal_state_reason(self) -> str:
+        reasons = []
+        if self.component_condition.strip():
+            reasons.append("a component condition")
+        for bit, label in (
+            (0x0001, "SourceOnly"),
+            (0x0002, "Optional"),
+            (0x0008, "SharedDllRefCount"),
+            (0x0010, "Permanent"),
+            (0x0040, "Transitive"),
+            (0x0080, "NeverOverwrite"),
+            (0x0800, "Shared"),
+        ):
+            if self.component_attributes & bit:
+                reasons.append(label)
+        return ", ".join(reasons) or "unknown component state"
+
+
+def file_manifest(msi: Path) -> list[MsiFileEntry]:
+    """Read exact root-relative File paths from Directory/Component/File without a cabinet.
+
+    An unresolved component, cycle, unsafe name or case-insensitive duplicate is an error, not
+    a reason to guess which file an install, repair or removal meant.
+    """
+    directories = {
+        row[0]: (row[1], row[2])
+        for row in export_table(msi, "Directory") if len(row) >= 3
+    }
+    components: dict[str, tuple[str, int, str]] = {}
+    for row in export_table(msi, "Component"):
+        if len(row) < 3:
+            continue
+        raw_attributes = row[3].strip() if len(row) > 3 else ""
+        try:
+            attributes = int(raw_attributes or "0")
+        except ValueError as exc:
+            raise MsiError(f"invalid MSI Component.Attributes for {row[0]!r}: {raw_attributes!r}") from exc
+        condition = row[4].strip() if len(row) > 4 else ""
+        components[row[0]] = (row[2], attributes, condition)
+
+    def segment(name: str) -> str:
+        if not name or name in {".", ".."} or any(char in name for char in ("/", "\\", ":", "\0")):
+            raise MsiError(f"unsafe MSI path segment: {name!r}")
+        return name
+
+    def location(directory_key: str) -> tuple[str, tuple[str, ...]]:
+        parts: list[str] = []
+        seen: set[str] = set()
+        key = directory_key
+        while key != "TARGETDIR":
+            if key in seen or key not in directories:
+                raise MsiError(f"unresolved or cyclic MSI Directory: {directory_key!r}")
+            seen.add(key)
+            parent, default_dir = directories[key]
+            if parent == "TARGETDIR":
+                return key, tuple(reversed(parts))
+            if not parent:
+                raise MsiError(f"MSI Directory has no parent: {key!r}")
+            name = _target_dir_name(default_dir)
+            if name not in ("", "."):
+                parts.append(segment(name))
+            key = parent
+        return "TARGETDIR", tuple(reversed(parts))
+
+    entries: list[MsiFileEntry] = []
+    seen_destinations: set[str] = set()
+    for row in export_table(msi, "File"):
+        if len(row) < 4 or row[1] not in components:
+            raise MsiError(f"unresolved MSI File row: {row[0] if row else '<empty>'}")
+        component_directory, component_attributes, component_condition = components[row[1]]
+        root, parts = location(component_directory)
+        name = segment(_long_name(row[2]))
+        try:
+            size = int(row[3])
+        except ValueError as exc:
+            raise MsiError(f"invalid MSI FileSize for {row[0]!r}: {row[3]!r}") from exc
+        if size < 0:
+            raise MsiError(f"negative MSI FileSize for {row[0]!r}")
+        relative = Path(*parts, name)
+        destination_key = f"{root}/{relative.as_posix()}".casefold()
+        if destination_key in seen_destinations:
+            raise MsiError(f"ambiguous MSI destination: {root}/{relative}")
+        seen_destinations.add(destination_key)
+        entries.append(MsiFileEntry(
+            row[0], root, relative, size, component_attributes, component_condition
+        ))
+    return sorted(entries, key=lambda entry: (entry.root, entry.relative.as_posix()))
+
+
 def payload_directories(msi: Path) -> dict[str, list[tuple[str, bool]]]:
     """What each payload root holds, read from the MSI's own tables: {root: [(name, is_dir), ...]}.
 
@@ -265,7 +381,7 @@ def payload_directories(msi: Path) -> dict[str, list[tuple[str, bool]]]:
         if row:
             dirs[row[0]] = (
                 row[1] if len(row) > 1 else "",
-                _long_name(row[2]) if len(row) > 2 else "",
+                _target_dir_name(row[2]) if len(row) > 2 else "",
             )
     component_dir = {row[0]: row[2] for row in export_table(msi, "Component") if len(row) > 2}
     files = [
@@ -311,7 +427,10 @@ def payload_directories(msi: Path) -> dict[str, list[tuple[str, bool]]]:
 
 
 def find_extracted_msis(
-    prefix: Path, hint: str | None = None, include_installer_cache: bool = False
+    prefix: Path,
+    hint: str | None = None,
+    include_installer_cache: bool = False,
+    include_non_plugin_installer_cache: bool = False,
 ) -> list[Path]:
     """Locate the MSIs vendor installers unpack inside the prefix.
 
@@ -322,12 +441,13 @@ def find_extracted_msis(
     `include_installer_cache` adds **Wine's own msiexec cache**, `drive_c/windows/Installer/`,
     where Windows Installer keeps a copy of every MSI a product registered with it. That is
     the only copy some products leave behind: a product installed by running its vendor wrapper
-    vendor wrapper without ever writing an MSI into its own vendor folder, so its
-    `Installer/d80a.msi` is what makes it verifiable, repairable and removable at all
-    (found 2026-09-26, after the GUI greyed the uninstall button out for it).
+    without ever writing an MSI into its own vendor folder, so its `Installer/d80a.msi` is what
+    makes it verifiable, repairable and removable at all. The directory also contains runtime,
+    driver and service MSIs. The normal inventory lookup filters those out for responsiveness;
+    ownership checks can request all of them because application packages may own shared paths.
 
-    It is off by default because that directory also holds the prefix's runtimes (PACE,
-    Wine Mono, Bonjour), which are noise when the caller only wants vendor plugin MSIs.
+    `include_non_plugin_installer_cache` is therefore intended for the uninstall ownership index,
+    not routine inventory scans. Those non-plugin packages may take longer to map.
     """
     bases = ["drive_c/users", "drive_c/ProgramData/Package Cache"]
     if include_installer_cache:
@@ -340,10 +460,8 @@ def find_extracted_msis(
         for path in root.rglob("*.msi"):
             if hint and hint.lower() not in str(path).lower():
                 continue
-            if base.endswith("windows/Installer") and not declares_plugin_payload(path):
-                # the prefix's runtimes, drivers and services live here too (Wine Mono's
-                # 83 MB MSI costs 20 s to read and owns no plugin file) - skip them before
-                # anyone reads a File table
+            if (base.endswith("windows/Installer") and not include_non_plugin_installer_cache
+                    and not declares_plugin_payload(path)):
                 continue
             found.append(path)
     def _stamp(path: Path) -> float:

@@ -24,6 +24,10 @@ from wpt.gui import MainWindow  # noqa: E402
 def main() -> int:
     app = QApplication([])
     window = MainWindow()
+    if window.env is None:
+        print("FAIL: scratch HOME has no detected Wine environment; refusing a modal GUI path")
+        window.close()
+        return 1
     window.show()
     app.processEvents()
 
@@ -62,10 +66,15 @@ def main() -> int:
     # and the second click must not have left a worker behind
     print("workers still tracked:", len(window._workers))
 
-    # and it must still close cleanly with nothing running
+    last_worker = window.worker
     window.close()
     app.processEvents()
-    print("closed cleanly")
+    if last_worker is not None and not last_worker.wait(0):
+        print("FAIL: the refresh QThread was not fully joined before close")
+        last_worker.wait(30_000)
+        app.processEvents()
+        return 1
+    print("overlapping refresh declined; window closed after the worker finished")
     return 0
 
 

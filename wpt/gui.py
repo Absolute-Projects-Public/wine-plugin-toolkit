@@ -45,6 +45,7 @@ from . import catalogue as catalogue_mod
 from . import installers as installers_mod
 from .installers import match_download
 from . import inventory as inventory_mod
+from . import standalone as standalone_mod
 from . import updates as updates_mod
 from . import msi as msi_mod
 from . import presets as presets_mod
@@ -53,7 +54,7 @@ from . import scan as scan_mod
 from . import sources as sources_mod
 from . import wrappers as wrappers_mod
 from . import installer as installer_mod
-from .environment import EnvironmentError_, detect
+from .environment import Environment, EnvironmentError_, detect
 from .installer import (
     DISABLED_SUFFIX,
     apply_plan,
@@ -227,6 +228,7 @@ class MainWindow(QMainWindow):
         self.inv = None
         self.worker: Worker | None = None
         self._workers: list[Worker] = []
+        self._standalone_launches: list[standalone_mod.StandaloneLaunch] = []
         self._closing = False
         # shown while a job is still running and the user has asked to leave; modeless on purpose,
         # because the waits below pump the event loop and it has to stay clickable
@@ -313,6 +315,8 @@ class MainWindow(QMainWindow):
         something, including "could not check", because a button that appears to do nothing is
         worse than a button that reports a failure.
         """
+        if self._closing:
+            return
         if self._update_busy:
             self.lbl_update_state.setText("checking...")
             return
@@ -493,6 +497,21 @@ class MainWindow(QMainWindow):
             self.log(f"downloaded to {path} - install it later with: sudo pacman -U {path}")
             return
 
+        self._launch_update_install(path)
+
+    def _launch_update_install(self, path: Path | None) -> None:
+        """Do not restart the GUI while its standalone prefix guard is active."""
+        if path is None:
+            self.log("update install refused: no downloaded package path")
+            return
+        if self._refuse_prefix_write_for_standalone("update/restart", self.install_log):
+            QMessageBox.warning(
+                self,
+                "Standalone still running",
+                "Close the tracked standalone process group and any detached helper/licensing "
+                "services before applying an update and restarting WPT.",
+            )
+            return
         launched, message = updates_mod.launch_install(path, restart=True)
         self.log(message if launched else f"update failed: {message}")
         if not launched:
@@ -545,11 +564,16 @@ class MainWindow(QMainWindow):
         self._workers.append(worker)
 
         def _retire() -> None:
+            # QThread.finished is emitted just before all native-thread cleanup is complete.
+            # Join before dropping the last tracking reference; otherwise interpreter teardown
+            # can destroy a thread that Qt still considers alive and abort with SIGABRT.
+            worker.wait()
             if worker in self._workers:
                 self._workers.remove(worker)
             # a close requested while this job was running waits for it, rather than
             # destroying a live QThread (Qt aborts the process for that)
-            if self._closing and not self._jobs_running():
+            if (self._closing and not self._jobs_running()
+                    and not self._update_job_running()):
                 self.close()
 
         worker.finished.connect(_retire)
@@ -572,16 +596,61 @@ class MainWindow(QMainWindow):
         return any(worker.isRunning() for worker in self._update_workers)
 
     def _forget_update_worker(self, worker) -> None:
-        """Drop a finished update worker, the same way `_forget_worker` does for prefix jobs."""
+        """Drop an update worker only after Qt's native thread cleanup has joined."""
+        worker.wait()
         try:
             self._update_workers.remove(worker)
         except ValueError:
             pass
+        if self._closing and not self._jobs_running() and not self._update_job_running():
+            self.close()
 
     def _jobs_running(self) -> bool:
         """True while any background job is alive. (Not `_busy`, which predates this and
         toggles the buttons.)"""
         return any(w.isRunning() for w in self._workers)
+
+    def _active_standalone_launches(self) -> list[standalone_mod.StandaloneLaunch]:
+        """Return Wine process groups still active, pruning fully-exited launch groups."""
+        active = []
+        for launch in self._standalone_launches:
+            try:
+                running = launch.process.poll() is None
+            except OSError:
+                # If process state cannot be determined, fail closed before a prefix write.
+                running = True
+            if not running and hasattr(os, "killpg"):
+                try:
+                    # Standalone Popen uses start_new_session=True, so its PID is the private
+                    # process-group ID. Keep the prefix busy if a child remains after wine exits.
+                    os.killpg(launch.pid, 0)
+                    running = True
+                except ProcessLookupError:
+                    running = False
+                except OSError:
+                    # Permission/unknown errors are ambiguous; fail closed.
+                    running = True
+            if running:
+                active.append(launch)
+        self._standalone_launches = active
+        return active
+
+    def _refuse_prefix_write_for_standalone(self, operation: str, log) -> bool:
+        """Block prefix mutations while a standalone launched here may still use its files."""
+        active = self._active_standalone_launches()
+        if not active:
+            return False
+        pids = ", ".join(str(launch.pid) for launch in active)
+        message = (
+            f"{operation}: close standalone Wine process group leader PID(s) {pids} before modifying "
+            "this prefix, and independently close any daemonized/helper/licensing processes that "
+            "may have outlived the group (WPT cannot track those)."
+        )
+        if callable(log):
+            log(message)
+        else:
+            log.appendPlainText(message)
+        return True
 
     def _wait_for_jobs(self) -> None:
         """Give any running job a moment to finish before the process goes away.
@@ -686,6 +755,25 @@ class MainWindow(QMainWindow):
                 worker.wait(3000)
         os._exit(130)
 
+    def _ask_keep_open_for_standalone(self, active_launches) -> bool:
+        """Return true unless the user explicitly selects Close anyway."""
+        pids = ", ".join(str(launch.pid) for launch in active_launches)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Standalone still running")
+        box.setText(
+            f"WPT still tracks Wine process group leader PID(s) {pids}. If you close WPT, "
+            "this window will stop blocking prefix changes. Detached helpers or licensing "
+            "services may still use the prefix."
+        )
+        keep_open = box.addButton("Keep WPT open", QMessageBox.ButtonRole.AcceptRole)
+        close_anyway = box.addButton("Close anyway", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep_open)
+        box.setEscapeButton(keep_open)
+        box.exec()
+        # Escape/titlebar dismissal is not explicit consent to drop the write guard.
+        return box.clickedButton() is not close_anyway
+
     def closeEvent(self, event) -> None:  # noqa: D102 - Qt entry point
         """Never let the window close out from under a running job.
 
@@ -694,7 +782,20 @@ class MainWindow(QMainWindow):
         plugin was disabled, the window was refreshed, and it vanished. The window now stays alive
         (hidden) until the job finishes, then closes itself.
         """
-        if not self._jobs_running():
+        active_launches = self._active_standalone_launches() if not self._closing else []
+        if active_launches:
+            if self._ask_keep_open_for_standalone(active_launches):
+                event.ignore()
+                return
+            self.plugin_log.appendPlainText(
+                "closing WPT while the standalone process group is active; prefix-write tracking ends"
+            )
+        self._closing = True
+        for timer_name in ("_startup_catalogue_timer", "_watch_timer"):
+            timer = getattr(self, timer_name, None)
+            if timer is not None:
+                timer.stop()
+        if not self._jobs_running() and not self._update_job_running():
             if self._closing_dialog is not None:
                 # the window is really going now, and the dialog is its child: hand it back
                 # explicitly so nothing is left pointing at a deleted widget
@@ -702,7 +803,6 @@ class MainWindow(QMainWindow):
                 self._closing_dialog = None
             super().closeEvent(event)
             return
-        self._closing = True
         self.hide()
         try:
             self.plugin_log.appendPlainText("finishing the running job before closing…")
@@ -850,6 +950,9 @@ class MainWindow(QMainWindow):
         return page
 
     def refresh_env(self) -> None:
+        if self._workers or self._update_workers:
+            self.env_note.setText("Re-detect is paused while WPT background work is running; wait for it to finish.")
+            return
         while self.env_form.rowCount():
             self.env_form.removeRow(0)
         try:
@@ -920,7 +1023,7 @@ class MainWindow(QMainWindow):
 
         self.plugin_hint = QLabel(
             "Tick a row to select it, then use the buttons above, or <b>right-click a row</b> for repair, "
-            "uninstall, enable/disable, the file's path and this plugin's preset sites."
+            "uninstall, enable/disable, a matching standalone app, local files and preset sites."
         )
         self.plugin_hint.setWordWrap(True)
         self.plugin_hint.setTextFormat(Qt.TextFormat.RichText)
@@ -952,13 +1055,14 @@ class MainWindow(QMainWindow):
         return page
 
     def refresh_plugins(self) -> None:
-        if not self.env:
+        env = self.env
+        if env is None:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
         previous_summary = self.plugin_summary.text()
         self.plugin_summary.setText("Reading the prefix…")
         self._spawn(
-            lambda emit: inventory_mod.build(self.env),
+            lambda emit: inventory_mod.build(env),
             on_done=self.plugins_done,
             on_failed=lambda msg: self.plugin_summary.setText(f"Inventory failed: {msg}"),
             log=self.plugin_log,
@@ -1003,8 +1107,7 @@ class MainWindow(QMainWindow):
             self.plugin_log.appendPlainText(f"! {warning}")
 
     def _plugin_context_menu(self, position) -> None:
-        """Right-click a plugin row: the same actions as the buttons, and the same shape as the
-        Download Plugins menu, so the two tabs behave alike."""
+        """Right-click a plugin row to build and show its actions."""
         row = self.plugin_table.rowAt(position.y())
         if row < 0:
             return
@@ -1014,7 +1117,16 @@ class MainWindow(QMainWindow):
         if entry is None:
             return
 
+        menu = self._build_plugin_menu(entry)
+        try:
+            menu.exec(self.plugin_table.viewport().mapToGlobal(position))
+        finally:
+            menu.deleteLater()
+
+    def _build_plugin_menu(self, entry) -> QMenu:
+        """Build one plugin's menu separately so its actions can be tested without a modal exec."""
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
         if entry.msi is not None:
             repair = menu.addAction("Repair this plugin from its cached MSI")
             repair.triggered.connect(self.repair_selected)
@@ -1033,6 +1145,47 @@ class MainWindow(QMainWindow):
             disable.triggered.connect(lambda *_args: self.toggle_selected(enabled=False))
 
         menu.addSeparator()
+        if self.env is not None and self.inv is not None:
+            resolution = standalone_mod.resolve_standalone(entry, self.inv, self.env)
+        else:
+            resolution = standalone_mod.StandaloneResolution(None, "Wine environment or inventory is unavailable.")
+        run_label = "Run in Standalone"
+        if resolution.executable is not None and not resolution.verified:
+            run_label += " (unverified)"
+        run = menu.addAction(run_label)
+        active_launches = self._active_standalone_launches()
+        if resolution.executable is None:
+            run.setEnabled(False)
+            run.setToolTip(resolution.reason)
+        elif active_launches:
+            pids = ", ".join(str(launch.pid) for launch in active_launches)
+            run.setEnabled(False)
+            run.setToolTip(
+                f"A WPT-launched Wine process group is still active (leader PID {pids}). Close it "
+                "before launching another standalone. WPT tracks the launcher and surviving members "
+                "of its process group only while this window is open; detached helpers or licensing "
+                "services may outlive it."
+            )
+        else:
+            wine_binary = self.env.wine_binary if self.env is not None else "the selected Wine runtime"
+            if resolution.verified:
+                verification = (
+                    "MSI ownership and file size were verified at the last inventory scan; "
+                    "a size mismatch at launch refuses the run until inventory is refreshed."
+                )
+            else:
+                verification = "MSI ownership and file integrity are unverified."
+            run.setToolTip(
+                f"Launch {resolution.executable.name} with {wine_binary}. {verification} "
+                "The app may contact its licensing service. While this window is open, WPT tracks "
+                "the launcher and surviving members of its process group. Detached helpers or "
+                "licensing services may outlive it; close those before changing the prefix."
+            )
+            run.triggered.connect(
+                lambda _checked=False, selected=entry: self._launch_standalone(selected)
+            )
+
+        menu.addSeparator()
         copy_name = menu.addAction("Copy plugin name")
         copy_name.triggered.connect(lambda: self._copy_to_clipboard(entry.name))
         copy_path = menu.addAction("Copy file path")
@@ -1040,7 +1193,7 @@ class MainWindow(QMainWindow):
         if entry.msi is not None:
             copy_msi = menu.addAction(f"Copy the MSI it came from ({entry.msi.name})")
             copy_msi.triggered.connect(lambda: self._copy_to_clipboard(str(entry.msi)))
-        reveal = menu.addAction("Show in file manager")
+        reveal = menu.addAction("Browse local files")
         reveal.triggered.connect(lambda: self._reveal(entry.path))
 
         menu.addSeparator()
@@ -1055,14 +1208,50 @@ class MainWindow(QMainWindow):
             action.triggered.connect(
                 lambda _checked=False, name=source.name, prod=product: self._open_source_for(name, prod)
             )
-        menu.exec(self.plugin_table.viewport().mapToGlobal(position))
+        return menu
 
     def _reveal(self, path: Path) -> None:
-        """Open the containing folder in the desktop's file manager."""
+        """Open the plugin's containing directory in the desktop file manager."""
         folder = path if path.is_dir() else path.parent
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
         self.plugin_log.appendPlainText(
             f"opened {folder} in the file manager" if opened else f"could not open a file manager for {folder}"
+        )
+
+    def _launch_standalone(self, plugin) -> None:
+        """Re-resolve and launch the matching app through the selected custom Wine environment."""
+        if not self.env or not self.inv:
+            self.plugin_log.appendPlainText("could not start standalone: Wine environment or inventory is unavailable")
+            return
+        if self._jobs_running():
+            self.plugin_log.appendPlainText("could not start standalone: a prefix job is still running")
+            return
+        active_launches = self._active_standalone_launches()
+        if active_launches:
+            pids = ", ".join(str(launch.pid) for launch in active_launches)
+            self.plugin_log.appendPlainText(
+                f"could not start standalone: WPT-launched Wine process(es) still active (PID {pids})"
+            )
+            return
+        resolution = standalone_mod.resolve_standalone(plugin, self.inv, self.env)
+        if resolution.executable is None:
+            self.plugin_log.appendPlainText(f"could not start standalone: {resolution.reason}")
+            return
+        try:
+            launch = standalone_mod.launch_standalone(
+                self.env, resolution.executable, expected_size=resolution.expected_size
+            )
+        except (OSError, ValueError) as exc:
+            self.plugin_log.appendPlainText(f"could not start {resolution.executable.name}: {exc}")
+            return
+        self._standalone_launches.append(launch)
+        if resolution.verified:
+            ownership = "MSI ownership verified at last scan; file size matches at launch"
+        else:
+            ownership = "MSI ownership/integrity unverified"
+        self.plugin_log.appendPlainText(
+            f"started {resolution.executable.name} with {self.env.wine_binary} in this prefix "
+            f"(PID {launch.pid}; {ownership}); output: {launch.log_path}"
         )
 
     def _selected_entry(self):
@@ -1083,6 +1272,8 @@ class MainWindow(QMainWindow):
         """Rename the selected plugin so the DAW scanner does or does not see it."""
         entry = self._selected_entry()
         if not entry or not self.env:
+            return
+        if self._refuse_prefix_write_for_standalone("enable/disable", self.plugin_log):
             return
         if self._jobs_running():
             # The rename is a write inside the prefix, and an install or uninstall job is writing
@@ -1114,21 +1305,24 @@ class MainWindow(QMainWindow):
         same wording, no blocked event loop.
         """
         entry = self._selected_entry()
-        if not entry or not entry.msi or not self.env:
+        env = self.env
+        if not entry or not entry.msi or env is None:
+            return
+        if self._refuse_prefix_write_for_standalone("uninstall", self.plugin_log):
             return
         msi_path = entry.msi
 
         def check(emit, path):
             emit(f"reading {Path(path).name} to describe what uninstalling it does …")
             ident = msi_mod.identity(path)
-            registered = bool(ident.product_code) and scan_mod.is_registered(self.env, ident.product_code)
+            registered = bool(ident.product_code) and scan_mod.is_registered(env, ident.product_code)
             return ident, registered
 
         self.btn_uninstall.setEnabled(False)
         self._spawn(
             check, msi_path,
             on_line=self.plugin_log.appendPlainText,
-            on_done=lambda pair: self._confirm_uninstall(msi_path, pair[0], pair[1]),
+            on_done=lambda pair: self._confirm_uninstall(msi_path, pair[0], pair[1], env),
             # Without this the worker's exception went nowhere: `failed` had no receiver, so an
             # unreadable MSI left the button disabled with nothing in the log to say why. Every
             # other action passes an on_failed; this one was the exception.
@@ -1141,11 +1335,15 @@ class MainWindow(QMainWindow):
             restore=(self.btn_uninstall,),
         )
 
-    def _confirm_uninstall(self, msi_path: Path, ident, registered: bool) -> None:
+    def _confirm_uninstall(self, msi_path: Path, ident, registered: bool, env=None) -> None:
         """The dialog, then the job. Runs on the GUI thread but reads nothing from disk."""
         # the pre-check worker disabled this button; every path that does not go on to run the job
         # has to hand it back, or a warning or a cancelled dialog leaves a dead button behind
         self._restore_buttons(self.btn_uninstall)
+        env = env if env is not None else self.env
+        if env is None:
+            self.plugin_log.appendPlainText("uninstall stopped: no Wine environment is configured")
+            return
         label = ident.label
         if not ident.product_code:
             QMessageBox.warning(self, "No ProductCode", f"{msi_path.name} has no ProductCode to uninstall.")
@@ -1156,18 +1354,19 @@ class MainWindow(QMainWindow):
             "Uninstall product",
             f"Remove {label} completely?\n\n"
             + (
-                f"Registered with Windows Installer: msiexec /x {ident.product_code} will run.\n"
+                f"Registered with Windows Installer: msiexec /x {ident.product_code} may run unless a safety gate refuses it.\n"
                 if registered
                 else "Not registered with Windows Installer in this prefix, so msiexec has nothing "
                 "to remove and the files go directly.\n"
             )
-            + f"Planned destinations from {msi_path.name} will be removed. A directory is removed "
-            "recursively, including any user files added to it.\n\nWine's msiexec /x runs BEFORE the "
-            "toolkit looks for presets. It may remove files first, including host paths mapped into "
-            "the prefix. The toolkit then attempts to rescue recognised presets to "
-            "~/.local/share/wpt/presets/ before its own direct deletion. Back up your own data "
-            "before continuing; this rescue is not a guarantee.\n\nDeleting plugin files does "
-            "not return an iLok activation; deactivate it separately."
+            + f"File-table paths from {msi_path.name} are checked before removal; files another "
+            "cached MSI claims, or table-only files whose contents cannot be verified, are "
+            "preserved. A registered uninstall may be refused when either condition applies.\n\n"
+            "The toolkit first attempts to rescue recognised presets to "
+            "~/.local/share/wpt/presets/. A failed copy stops the job. Wine's msiexec /x may "
+            "affect host paths mapped into the prefix and remove unrecognised personal files. "
+            "Back up your own data before continuing; this rescue is not a guarantee.\n\n"
+            "Deleting plugin files does not return an iLok activation; deactivate it separately."
             + (
                 "\n\nREGISTRY PURGE is on and will remove matching product entries pointing at "
                 "planned files. Other registry entries may remain."
@@ -1176,6 +1375,8 @@ class MainWindow(QMainWindow):
             ),
         )
         if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self._refuse_prefix_write_for_standalone("uninstall", self.plugin_log):
             return
         self.btn_uninstall.setEnabled(False)
         product_code = ident.product_code
@@ -1197,55 +1398,111 @@ class MainWindow(QMainWindow):
                     # end up with its media gone - and then this refused outright, leaving a
                     # working plugin nobody could remove. The MSI's tables still name every file
                     # it placed, and a removal only acts on those destinations.
-                    plan = build_plan_from_tables(msi_path, self.env, include_aax=True)
+                    plan = build_plan_from_tables(msi_path, env, include_aax=True)
                     emit(f"! {msi_path.name}: its payload media is gone")
                     emit(f"!   {exc}")
-                    emit("!   reading the file list from the MSI's own tables - what gets removed")
-                    emit("!   is unchanged. Wine and scratch can affect paths outside the prefix")
+                    emit("!   File-table paths are known, but installed bytes cannot be verified;")
+                    emit("!   matching files will be preserved for manual review.")
                 else:
-                    plan = build_plan(msi_path, self.env, SCRATCH, include_aax=True)
+                    plan = build_plan(msi_path, env, SCRATCH, include_aax=True)
             except (OSError, msi_mod.MsiError) as exc:
                 raise RuntimeError(
                     f"cannot read {msi_path.name} for its file list ({exc}), nothing was removed"
                 ) from exc
             emit(f"this MSI describes {len(plan.actions)} destination(s)")
 
-            emit(f"msiexec /x {product_code}")
-            code, detail = uninstall_product(self.env, product_code)
-            if detail:
-                emit(detail)
-            emit(f"msiexec exited {code}" + ("" if code == 0 else " (no registration to clear?)"))
+            uninstall_env = env
+            try:
+                installer_mod.validate_removal_paths(plan, uninstall_env)
+            except (OSError, msi_mod.MsiError) as exc:
+                raise RuntimeError(
+                    "uninstall refused: unsafe or ambiguous planned path "
+                    f"({exc}); no preset rescue, msiexec, direct deletion, or registry purge was run"
+                ) from exc
+            registered_now = bool(product_code) and scan_mod.is_registered(uninstall_env, product_code)
+            if registered_now != registered:
+                raise RuntimeError(
+                    "registration state changed since confirmation; uninstall stopped without changes"
+                )
+            if registered_now and plan.destinations_only:
+                raise RuntimeError(
+                    "uninstall refused: payload bytes are unavailable, so file contents cannot be "
+                    "verified. No preset rescue, msiexec, direct deletion, or registry purge was run; "
+                    "restore the payload media first."
+                )
+            unmapped_roots = installer_mod.unmapped_destination_warnings(plan)
+            if registered_now and unmapped_roots:
+                details = "; ".join(unmapped_roots)
+                raise RuntimeError(
+                    "uninstall refused: this MSI has file roots with no safe destination; Wine's "
+                    "vendor uninstaller may remove those unmapped files. No preset rescue, msiexec, "
+                    f"direct deletion, or registry purge was run. {details}"
+                )
+            warnings_before = len(plan.warnings)
+            shared_paths = inventory_mod.mark_cross_product_claims(plan, uninstall_env)
+            for warning in plan.warnings[warnings_before:]:
+                emit(f"! ownership warning: {warning}")
+            if registered_now and shared_paths:
+                raise RuntimeError(
+                    "uninstall refused: one or more planned files are also claimed by another "
+                    "cached MSI. No preset rescue, msiexec, direct deletion, or registry purge was run."
+                )
 
-            # Presets before our direct deletion, but AFTER msiexec above. The MSI's own files
-            # come back with a reinstall;
-            # the user's own and downloaded packs do not. The products to look at come from the
-            # plan's own destinations and the vendor tree, not from the MSI's ProductName - that
-            # can be absent, or differ from the folder the vendor's installer created, and either
-            # way this used to rescue nothing and then delete the user's presets anyway.
-            saved, saved_for, looked_at = presets_mod.rescue_for_plan(self.env, plan)
+            # Rescue before msiexec: the vendor's removal can delete user files itself.
+            # Derive product names from the plan and vendor tree, not only ProductName.
+            saved, saved_for, looked_at = presets_mod.rescue_for_plan(uninstall_env, plan)
+            failed_rescue = [row for row in saved if row[0] == "failed"]
+            if failed_rescue:
+                details = "; ".join(f"{source}: {note}" for _status, source, note in failed_rescue)
+                raise RuntimeError(f"preset rescue failed before msiexec; uninstall refused: {details}")
             if saved:
                 for product, destination in saved_for:
                     emit(f"presets: {product} -> {destination}")
-                emit(f"presets: {len(saved)} file(s) copied; toolkit direct deletion has not run yet")
+                emit(f"presets: {len(saved)} file(s) copied before msiexec")
             else:
-                # Loud on purpose: an empty rescue is not reassurance; direct deletion follows.
-                emit("! presets: nothing found to rescue, and the files below are still being "
-                     "deleted")
+                emit("! presets: nothing found to rescue; planned directories may hold user files")
                 emit("!   looked at: "
                      + (", ".join(looked_at) if looked_at else "no product folder in this prefix"))
-                emit("!   if this product keeps your own presets here, rescue them by hand before "
-                     "removing it")
+                emit("!   back up any user files in the planned destinations before removing them")
 
-            rows = installer_mod.remove_files(plan, self.env)
-            remaining = installer_mod.leftovers(plan, self.env)
+            if registered_now:
+                emit(f"msiexec /x {product_code}")
+                code, detail = uninstall_product(uninstall_env, product_code)
+                if detail:
+                    emit(detail)
+                emit(f"msiexec exited {code}")
+                if code != 0:
+                    raise RuntimeError(
+                        f"msiexec exited {code}; direct file removal and registry purge were skipped"
+                    )
+                try:
+                    still_registered = scan_mod.is_registered(uninstall_env, product_code)
+                except OSError as exc:
+                    raise RuntimeError(
+                        "could not verify registration after msiexec; direct file removal and "
+                        f"registry purge were skipped ({exc})"
+                    ) from exc
+                if still_registered:
+                    raise RuntimeError(
+                        "msiexec exited 0 but the product is still registered; direct file removal "
+                        "and registry purge were skipped"
+                    )
+            else:
+                emit("product is not registered; skipping msiexec /x")
+
+            rows = installer_mod.remove_files(plan, uninstall_env)
+            remaining = installer_mod.leftovers(plan, uninstall_env)
             purge_rows = []
-            if purge:
-                edits = installer_mod.stale_registry_edits(self.env, plan, product_code)
+            removal_errors = [row for row in rows if row[0] in ("failed", "refused")]
+            if purge and (removal_errors or remaining):
+                emit("! purge skipped: file removal was refused or left MSI-owned files behind")
+            if purge and not removal_errors and not remaining:
+                edits = installer_mod.stale_registry_edits(uninstall_env, plan, product_code)
                 emit(f"purge: {len(edits)} registry entr{'y' if len(edits) == 1 else 'ies'} to remove")
                 for edit in edits:
                     emit(f"    {edit.hive}\\{edit.key}" + (f"  [{edit.value}]" if edit.value else ""))
                     emit(f"        {edit.reason}")
-                purge_rows = installer_mod.purge_registry(self.env, edits) if edits else []
+                purge_rows = installer_mod.purge_registry(uninstall_env, edits) if edits else []
             return rows, remaining, purge_rows
 
         self._spawn(
@@ -1266,14 +1523,19 @@ class MainWindow(QMainWindow):
         rows, remaining, purge_rows = result
         for status, path, note in rows:
             self.plugin_log.appendPlainText(f"{status}: {path} {note}".strip())
+        removal_errors = [row for row in rows if row[0] in ("failed", "refused")]
+        if removal_errors:
+            self.plugin_log.appendPlainText(
+                f"! uninstall incomplete: {len(removal_errors)} file removal(s) failed or were refused")
         if not rows:
             self.plugin_log.appendPlainText("nothing to remove: no file this MSI describes is on disk")
         if remaining:
             self.plugin_log.appendPlainText(f"! {len(remaining)} path(s) still on disk:")
             for path in remaining:
                 self.plugin_log.appendPlainText(f"    {path}")
-        else:
-            self.plugin_log.appendPlainText("no planned destination remains on disk; nested files were not audited")
+        elif not removal_errors:
+            self.plugin_log.appendPlainText(
+                "no MSI-owned file remains on disk; unowned files were preserved")
         if purge_rows:
             for status, target, note in purge_rows:
                 self.plugin_log.appendPlainText(f"{status}: {target} {note}".strip())
@@ -1289,7 +1551,10 @@ class MainWindow(QMainWindow):
 
     def repair_selected(self) -> None:
         entry = self._selected_entry()
-        if not entry or not entry.msi:
+        env = self.env
+        if not entry or not entry.msi or env is None:
+            return
+        if self._refuse_prefix_write_for_standalone("repair", self.plugin_log):
             return
         self.btn_repair.setEnabled(False)
         msi_path = entry.msi
@@ -1297,13 +1562,14 @@ class MainWindow(QMainWindow):
         def job(emit, msi_path):
             emit(f"extracting {msi_path.name}")
             msi_mod.extract(msi_path, SCRATCH)
-            plan = build_plan(msi_path, self.env, SCRATCH)
-            todo = filter_needing_repair(plan)
+            plan = build_plan(msi_path, env, SCRATCH)
+            todo = filter_needing_repair(plan, env)
             if not todo.actions:
                 return 0, 0, []
-            rows = apply_plan(todo, self.env, dry_run=False)
-            bad = [c for c in verify_plan(todo) if c[0] != "ok"]
-            return len(rows), len(bad), rows
+            rows = apply_plan(todo, env, dry_run=False)
+            bad = [c for c in verify_plan(todo, env) if c[0] != "ok"]
+            restored = sum(status == "copied" for status, _path, _note in rows)
+            return restored, len(bad), rows
 
         self._spawn(
             job, msi_path,
@@ -1405,13 +1671,14 @@ class MainWindow(QMainWindow):
         dozen of them this is seconds of work - the same reason the downloads scan runs on a worker
         (see `_scan_prefix_and_downloads`). It used to run inline, on the GUI thread.
         """
-        if not self.env:
+        env = self.env
+        if env is None:
             self.log("no environment detected")
             return
         self._spawn(
-            self._scan_prefix_msis, self.env.prefix,
+            self._scan_prefix_msis, env.prefix,
             on_line=self.log,
-            on_done=self.msis_found,
+            on_done=lambda found: self.msis_found(found, env.prefix),
             on_failed=lambda msg: self.log(f"could not read the prefix's MSIs: {msg}"),
             log=self.log,
             label="find MSIs",
@@ -1426,20 +1693,24 @@ class MainWindow(QMainWindow):
             if msi_mod.declares_plugin_payload(path)
         ]
 
-    def msis_found(self, found: list) -> None:
+    def msis_found(self, found, prefix: Path | None = None) -> None:
         # the combo is replaced only on success: clearing it before the scan meant a failed scan
         # threw away the MSI the user had already picked
         self.msi_combo.clear()
         for path in found:
             self.msi_combo.addItem(str(path))
-        self.log(f"{len(found)} MSI(s) found inside {self.env.prefix}")
+        prefix_label = prefix if prefix is not None else (self.env.prefix if self.env else "the selected prefix")
+        self.log(f"{len(found)} MSI(s) found inside {prefix_label}")
 
     def log(self, message: str) -> None:
         self.install_log.appendPlainText(message)
 
     def run_install(self, dry_run: bool) -> None:
-        if not self.env:
+        env = self.env
+        if env is None:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected. See the Environment tab.")
+            return
+        if not dry_run and self._refuse_prefix_write_for_standalone("install", self.install_log):
             return
         if not self.msi_combo.currentText():
             QMessageBox.warning(self, "No MSI", "Pick an installer MSI first.")
@@ -1463,13 +1734,13 @@ class MainWindow(QMainWindow):
         def job(emit, msi_path: Path, dry_run: bool, options: dict):
             emit(f"extracting {msi_path.name} -> {SCRATCH}")
             msi_mod.extract(msi_path, SCRATCH)
-            plan = build_plan(msi_path, self.env, SCRATCH, **options)
-            return plan, apply_plan(plan, self.env, dry_run=dry_run)
+            plan = build_plan(msi_path, env, SCRATCH, **options)
+            return plan, apply_plan(plan, env, dry_run=dry_run)
 
         self._spawn(
             job, msi_path, dry_run, options,
             on_line=self.log,
-            on_done=lambda result: self.install_done(result, dry_run),
+            on_done=lambda result: self.install_done(result, dry_run, env),
             on_failed=lambda msg: (self.install_failed(msg), self.refresh_plugins()),
             log=self.log,
             label="install",
@@ -1485,8 +1756,13 @@ class MainWindow(QMainWindow):
                 if plan.skipped_app else
                 "nothing to place: this MSI declares no payload this toolkit recognises")
 
-    def install_done(self, result, dry_run: bool) -> None:
+    def install_done(self, result, dry_run: bool, env: Environment | None = None) -> None:
         plan, rows = result
+        env = env if env is not None else self.env
+        if env is None:
+            self.log("verification skipped: the Wine environment is no longer detected")
+            self._busy(False)
+            return
         self.plan = plan
         for status, path, note in rows:
             row = self.install_table.rowCount()
@@ -1503,7 +1779,7 @@ class MainWindow(QMainWindow):
         else:
             from .installer import verify_plan
 
-            checks = verify_plan(plan)
+            checks = verify_plan(plan, env if env is not None else self.env)
             ok = sum(1 for c in checks if c[0] == "ok")
             bad = [c for c in checks if c[0] != "ok"]
             self.log(f"verified {ok} files byte-for-byte against the MSI File table")
@@ -1670,10 +1946,20 @@ class MainWindow(QMainWindow):
         self._watch_timer.setInterval(4000)
         self._watch_timer.timeout.connect(self._watch_tick)
         self._watch_timer.start()
-        QTimer.singleShot(200, lambda: self.load_catalogue(refresh=False))
+        self._startup_catalogue_timer = QTimer(self)
+        self._startup_catalogue_timer.setSingleShot(True)
+        self._startup_catalogue_timer.timeout.connect(self._startup_load_catalogue)
+        self._startup_catalogue_timer.start(200)
         return page
 
+    def _startup_load_catalogue(self) -> None:
+        """Load the catalogue only while the window is still open."""
+        if not self._closing:
+            self.load_catalogue(refresh=False)
+
     def load_catalogue(self, refresh: bool = False) -> None:
+        if self._closing:
+            return
         catalogue = catalogue_mod.load_snapshot()
         if refresh:
             self.download_summary.setText("Reading neuraldsp.com/downloads …")
@@ -1752,15 +2038,18 @@ class MainWindow(QMainWindow):
                 self.download_table.scrollToItem(cell)
                 return
 
-    def _scan_prefix_and_downloads(self):
+    def _scan_prefix_and_downloads(self, env: Environment | None = None):
         """The slow half of a downloads refresh: cached MSIs, and what is in ~/Downloads.
 
         Reading product names out of cached MSIs and matching downloaded installers both shell out
         to msitools, which is seconds of work. This runs on a worker thread; the table is filled
         afterwards on the GUI thread.
         """
+        env = env if env is not None else self.env
+        if env is None:
+            return set(), {}
         msi_names: set[str] = set()
-        for msi_path in msi_mod.find_extracted_msis(self.env.prefix, include_installer_cache=True):
+        for msi_path in msi_mod.find_extracted_msis(env.prefix, include_installer_cache=True):
             try:
                 name = msi_mod.identity(msi_path).product_name
             except Exception:  # noqa: BLE001 - one unreadable MSI must not break the tab
@@ -1768,7 +2057,7 @@ class MainWindow(QMainWindow):
             if name:
                 msi_names.add(_key(name))
         downloads = Path.home() / "Downloads"
-        pending = (installers_mod.discover(self.env, extra_dirs=[downloads])
+        pending = (installers_mod.discover(env, extra_dirs=[downloads])
                    if downloads.is_dir() else [])
         return msi_names, {_key(item.product): item.path for item in pending}
 
@@ -1778,7 +2067,8 @@ class MainWindow(QMainWindow):
         The watcher used to call this every time ~/Downloads changed, which meant a msitools scan
         on the GUI thread - the freeze the worker threads exist to avoid.
         """
-        if not self.env:
+        env = self.env
+        if self._closing or env is None:
             return
         if background:
             # A scan already in flight will refill the table when it lands, so a second one is not
@@ -1792,7 +2082,7 @@ class MainWindow(QMainWindow):
             self._downloads_scan_running = True
 
             def work(emit):
-                return self._scan_prefix_and_downloads()
+                return self._scan_prefix_and_downloads(env)
 
             worker = Worker(work)
             self._workers.append(worker)
@@ -1823,7 +2113,7 @@ class MainWindow(QMainWindow):
             worker.start()
             return
 
-        self._msi_names, self._downloads = self._scan_prefix_and_downloads()
+        self._msi_names, self._downloads = self._scan_prefix_and_downloads(env)
         self._fill_download_table()
 
     def _fill_download_table(self) -> None:
@@ -1866,11 +2156,14 @@ class MainWindow(QMainWindow):
         )
 
     def _forget_worker(self, worker) -> None:
-        """Drop a finished worker so the list does not grow without bound."""
+        """Join and drop a finished worker so closing cannot outpace its teardown."""
+        worker.wait()
         try:
             self._workers.remove(worker)
         except ValueError:
             pass
+        if self._closing and not self._jobs_running() and not self._update_job_running():
+            self.close()
 
     def _downloads_for(self, release) -> Path | None:
         """Match a catalogue entry to a downloaded file, strictly.
@@ -1929,7 +2222,10 @@ class MainWindow(QMainWindow):
         installer = cell.data(Qt.ItemDataRole.UserRole + 1)
 
         menu = self._build_download_menu(release, Path(installer) if installer else None)
-        menu.exec(self.download_table.viewport().mapToGlobal(position))
+        try:
+            menu.exec(self.download_table.viewport().mapToGlobal(position))
+        finally:
+            menu.deleteLater()
 
     def _build_download_menu(self, release, installer: Path | None) -> QMenu:
         """The row menu, built separately so it can be inspected without a modal exec()."""
@@ -2112,13 +2408,14 @@ class MainWindow(QMainWindow):
         return page
 
     def refresh_pending(self) -> None:
-        if not self.env:
+        env = self.env
+        if env is None:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
         previous_summary = self.pending_summary.text()
         self.pending_summary.setText("Looking for installers…")
         self._spawn(
-            lambda emit: installers_mod.discover(self.env),
+            lambda emit: installers_mod.discover(env),
             on_done=self.pending_done,
             on_failed=lambda msg: self.pending_summary.setText(f"Discovery failed: {msg}"),
             log=self.pending_log,
@@ -2165,7 +2462,10 @@ class MainWindow(QMainWindow):
 
     def install_pending_selected(self) -> None:
         installer = self._selected_installer()
-        if not installer or not self.env:
+        env = self.env
+        if not installer or env is None:
+            return
+        if self._refuse_prefix_write_for_standalone("install", self.pending_log):
             return
         # a downloaded .exe is the vendor's wrapper around an MSI: bridge the two here,
         # running the wrapper under Wine only when that is the only way to get its MSI
@@ -2184,7 +2484,7 @@ class MainWindow(QMainWindow):
 
         def job(emit, installer):
             prepared = wrappers_mod.prepare_msi(
-                self.env,
+                env,
                 installer.path,
                 SCRATCH,
                 product_hint=installer.product,
@@ -2193,11 +2493,13 @@ class MainWindow(QMainWindow):
             )
             if not prepared.ok:
                 raise RuntimeError(prepared.detail)
+            if prepared.msi is None:
+                raise RuntimeError("installer preparation succeeded without an MSI path")
             emit(f"MSI: {prepared.msi}")
             msi_mod.extract(prepared.msi, SCRATCH)
-            plan = build_plan(prepared.msi, self.env, SCRATCH)
-            rows = apply_plan(plan, self.env, dry_run=False)
-            bad = [c for c in verify_plan(plan) if c[0] != "ok"]
+            plan = build_plan(prepared.msi, env, SCRATCH)
+            rows = apply_plan(plan, env, dry_run=False)
+            bad = [c for c in verify_plan(plan, env) if c[0] != "ok"]
             return plan, rows, bad
 
         self._spawn(
@@ -2264,13 +2566,14 @@ class MainWindow(QMainWindow):
         return page
 
     def run_scan(self) -> None:
-        if not self.env:
+        env = self.env
+        if env is None:
             QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
             return
         previous_summary = self.scan_summary.text()
         self.scan_summary.setText("Scanning…")
         self._spawn(
-            lambda emit: scan_prefix(self.env),
+            lambda emit: scan_prefix(env),
             on_done=self.scan_done,
             on_failed=lambda msg: self.scan_summary.setText(f"Scan failed: {msg}"),
             log=self.scan_products,
@@ -2302,10 +2605,14 @@ class MainWindow(QMainWindow):
         self.scan_products.setPlainText("\n".join(lines) or "no registered products found")
 
     def run_triage(self) -> None:
+        env = self.env
+        if env is None:
+            QMessageBox.warning(self, "No environment", "Wine prefix not detected.")
+            return
         previous_summary = self.scan_summary.text()
         self.scan_summary.setText("Triage: reading every Wine prefix on this machine…")
         self._spawn(
-            lambda emit: products_mod.render(products_mod.triage(self.env)),
+            lambda emit: products_mod.render(products_mod.triage(env)),
             on_done=self.triage_done,
             on_failed=lambda msg: self.scan_summary.setText(f"Triage failed: {msg}"),
             log=self.scan_products,

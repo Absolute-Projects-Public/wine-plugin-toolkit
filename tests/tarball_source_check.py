@@ -23,11 +23,18 @@ def fixture(repo: Path) -> None:
     for name in ("README.md", "TESTING.md", "CONTRIBUTING.md", "CHANGELOG.md",
                  "LICENSE", "pyproject.toml"):
         (repo / name).write_text(f"{name}\n")
+    (repo / "CHANGELOG.md").write_text("# Changelog\n\n## 0.6.4\n")
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "wine-plugin-toolkit"\nversion = "0.6.4"\n'
+    )
     (repo / "PKGBUILD").write_text("pkgver=0.6.4\nsha256sums=('old')\n")
     (repo / "wpt" / "__init__.py").write_text("__version__ = '0.6.4'\n")
     (repo / "tests" / "dummy.py").write_text("pass\n")
     (repo / "docs" / "DESIGN.md").write_text("review map\n")
     (repo / "packaging" / "make-tarball.sh").write_bytes(BUILDER.read_bytes())
+    (repo / "packaging" / "check_version.py").write_bytes(
+        (ROOT / "packaging" / "check_version.py").read_bytes()
+    )
     (repo / "packaging" / "release.sh").write_bytes((ROOT / "packaging" / "release.sh").read_bytes())
     assert run("git", "init", "-q", cwd=repo).returncode == 0
     assert run("git", "add", "-A", cwd=repo).returncode == 0
@@ -45,6 +52,10 @@ def clean_build_and_untracked_refusal() -> None:
         tarball = repo / "dist" / "wpt-0.6.4.tar.gz"
         assert tarball.exists()
         before = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        loose_umask = run("bash", "-c", "umask 0002; bash packaging/make-tarball.sh", cwd=repo)
+        assert loose_umask.returncode == 0, (loose_umask.stdout, loose_umask.stderr)
+        after = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        assert after == before, (before, after)
         with tarfile.open(tarball) as tf:
             names = set(tf.getnames())
             assert "wine-plugin-toolkit-0.6.4/CONTRIBUTING.md" in names
@@ -53,7 +64,7 @@ def clean_build_and_untracked_refusal() -> None:
         attempted = run("bash", "packaging/make-tarball.sh", cwd=repo)
         assert attempted.returncode != 0, (attempted.stdout, attempted.stderr)
         assert hashlib.sha256(tarball.read_bytes()).hexdigest() == before
-    print("ok clean build; untracked shipped-subtree file refuses without replacing tarball")
+    print("ok clean tarball is umask-independent; untracked shipped-subtree file refuses")
 
 
 def tracked_edit_refusal() -> None:
@@ -64,6 +75,23 @@ def tracked_edit_refusal() -> None:
         attempted = run("bash", "packaging/make-tarball.sh", cwd=repo)
         assert attempted.returncode != 0, (attempted.stdout, attempted.stderr)
     print("ok uncommitted tracked edit refuses the release builder")
+
+
+def version_drift_refusal() -> None:
+    with tempfile.TemporaryDirectory(prefix="wpt-tarball-check-") as tmp:
+        repo = Path(tmp)
+        fixture(repo)
+        project = repo / "pyproject.toml"
+        project.write_text(project.read_text().replace('version = "0.6.4"', 'version = "9.9.9"'))
+        assert run("git", "add", "pyproject.toml", cwd=repo).returncode == 0
+        committed = run("git", "-c", "user.name=test", "-c", "user.email=test" + "@" + "example.invalid",
+                        "commit", "-qm", "version drift", cwd=repo)
+        assert committed.returncode == 0, committed.stderr
+        attempted = run("bash", "packaging/make-tarball.sh", cwd=repo)
+        assert attempted.returncode != 0
+        assert "version metadata mismatch" in (attempted.stdout + attempted.stderr)
+        assert not (repo / "dist" / "wpt-0.6.4.tar.gz").exists()
+    print("ok source builder refuses committed version drift")
 
 
 def release_refuses_unpinned_tarball() -> None:
@@ -78,7 +106,9 @@ def release_refuses_unpinned_tarball() -> None:
         attempted = subprocess.run(["bash", "packaging/release.sh"], cwd=repo, env=env,
                                    capture_output=True, text=True)
         assert attempted.returncode != 0, (attempted.stdout, attempted.stderr)
-        assert "tarball hash has changed" in attempted.stdout, attempted.stdout
+        status = run("git", "status", "--porcelain", "--untracked-files=all", "--", "wpt", cwd=repo)
+        assert "tarball hash has changed" in attempted.stdout, (
+            attempted.stdout, attempted.stderr, attempted.returncode, status.stdout)
         assert "==> publish" not in attempted.stdout, attempted.stdout
     print("ok release helper stops before publication steps when pin mismatches")
 
@@ -115,7 +145,8 @@ def release_refuses_remote_version() -> None:
 if __name__ == "__main__":
     clean_build_and_untracked_refusal()
     tracked_edit_refusal()
+    version_drift_refusal()
     release_refuses_unpinned_tarball()
     release_refuses_existing_tag()
     release_refuses_remote_version()
-    print("tarball source check: 5/5 passed")
+    print("tarball source check: 6/6 passed")

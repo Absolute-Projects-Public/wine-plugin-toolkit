@@ -4,8 +4,8 @@
 Run from the repository or an extracted release tarball:
     python3 tests/readme_claims_check.py
 
-The checks intentionally fail if limitations discovered in 0.6.4 disappear from the README before
-code and tests justify removing them. A checked box is not proof that all prose is true: see
+The checks fail if current limitations disappear from the README without evidence. A checked box
+is not proof that all prose is true: see
 ``docs/CLAIMS.md`` and the release's raw test evidence.
 """
 from __future__ import annotations
@@ -32,18 +32,18 @@ CLAIMS = ROOT / "docs" / "CLAIMS.md"
 GUI = ROOT / "wpt" / "gui.py"
 EXPECTED_TABS = ("Environment", "Plugins", "Download", "Pending Install", "Install MSI", "Diagnostics")
 REQUIRED_LIMITS = (
-    "duplicate names and bundle-internal files",
-    "not yet a complete check of every placed file",
-    "The CLI currently calls Wine's `msiexec /x` **before** preset rescue",
-    "directory is removed **recursively**",
-    "`ok` does not certify every file in a product",
+    "same-size edit is not detectable",
+    "A failed rescue stops the job",
+    "complete backup guarantee.",
+    "Wine's vendor uninstall can still remove",
+    "It prunes empty parents",
 )
 REQUIRED_BY_SECTION = {
-    "What it does": ("not yet a complete check of every placed file", "**before** preset rescue"),
-    "Coming from Windows": ("scratch space, preset-rescue storage",),
-    "Presets and IRs": ("Both the CLI and GUI run Wine's `msiexec /x`", "Back up your own files"),
-    "How it verifies": ("not a complete per-file verification", "`ok` does not certify every file"),
-    "Scope and limitations": ("directory is removed **recursively**", "GUI also runs `msiexec /x`"),
+    "What it does": ("not a content-hash", "cached-MSI ownership scan is incomplete"),
+    "Coming from Windows": ("scratch space, preset-rescue storage", "cannot prove that every user file was discovered"),
+    "Presets and IRs": ("leaves files outside", "Wine's `msiexec /x` can still remove them"),
+    "How it verifies": ("size is not a content hash", "every optional MSI component was installed"),
+    "Scope and limitations": ("component-state-uncertain files as leftovers", "GUI has no"),
 }
 OLD_PROMISES = (
     r"Verifies\s+every file it placed",
@@ -58,6 +58,8 @@ OLD_PROMISES = (
     r"nothing outside this prefix is touched",
     r"Your own presets and settings are not touched unless",
     r"copied to ~/\.local/share/wpt/presets/ first",
+    r"leave every file in place",
+    r"directory is removed recursively",
 )
 
 
@@ -211,7 +213,8 @@ def run() -> None:
     comment_only = "<!-- " + " ".join(REQUIRED_LIMITS) + " -->"
     check(missing_limits(comment_only) != set(), "HTML comment cannot satisfy public limitations")
     check(bool(old_promises(readme + "\nVerifies every file it placed")), "old absolute detected")
-    check("C01" in ledger_gaps(ledger.replace("**REPRODUCED contradiction", "**VERIFIED contradiction")),
+    check("C01" in ledger_gaps(ledger.replace("**TARGETED TEST; OPEN real extraction and feature state.",
+                                                "**VERIFIED; OPEN real extraction and feature state.")),
           "ledger status mutation is rejected")
     for bad_example in ("$ wpt repair --bogus-flag", "    wpt uninstall --nonexistent"):
         damaged = readme + "\n```bash\n" + bad_example + "\n```"

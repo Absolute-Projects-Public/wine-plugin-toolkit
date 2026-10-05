@@ -29,8 +29,7 @@ sha256sums=('96d75ce28094dbfa54b84052513c0ee2475795b37c227bba16af5753349d5e31')
 
 check() {
     # The core suites are stdlib-only, so they run wherever this package is built.
-    # The four GUI suites need PySide6 (an optdepend) and an offscreen Qt platform:
-    #   QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py   (and the other three)
+    # The offscreen GUI suites need PySide6 (an optdepend); see packaging/run-suites.sh.
     cd "$srcdir/$pkgname-$pkgver"
     python3 tests/test_core.py
     python3 tests/test_prefix_integration.py
@@ -46,6 +45,8 @@ package() {
     install -Dm644 "$srcdir/$pkgname-$pkgver/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
     install -Dm644 "$srcdir/$pkgname-$pkgver/TESTING.md" "$pkgdir/usr/share/doc/$pkgname/TESTING.md"
     install -Dm644 "$srcdir/$pkgname-$pkgver/pyproject.toml" "$pkgdir/usr/share/doc/$pkgname/pyproject.toml"
+    install -Dm644 "$srcdir/$pkgname-$pkgver/CONTRIBUTING.md" "$pkgdir/usr/share/doc/$pkgname/CONTRIBUTING.md"
+    install -Dm644 "$srcdir/$pkgname-$pkgver/LICENSE" "$pkgdir/usr/share/doc/$pkgname/LICENSE"
     # the README embeds these two images; without them the packaged docs have broken links
     cp -r "$srcdir/$pkgname-$pkgver/docs" "$pkgdir/usr/share/doc/$pkgname/"
 

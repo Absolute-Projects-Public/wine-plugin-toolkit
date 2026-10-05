@@ -76,13 +76,16 @@ def main() -> int:
     app.processEvents()
 
     # --- 3: the install options are a group at the left, not a spread
+    # A hidden tab has not been laid out yet, so select it before measuring geometry.
+    window.tabs.setCurrentIndex([window.tabs.tabText(i) for i in range(window.tabs.count())].index("Install MSI"))
+    app.processEvents()
     boxes = [window.cb_vst3, window.cb_vst2, window.cb_standalone, window.cb_presets, window.cb_aax]
-    gaps = [
-        window.cb_aax.x() - window.cb_presets.x(),
-        window.cb_standalone.x() - window.cb_vst2.x(),
-    ]
-    check("the option checkboxes sit next to each other",
-          all(gap < 260 for gap in gaps), True)
+    gaps = [right.x() - left.geometry().right() - 1 for left, right in zip(boxes, boxes[1:])]
+    options_group = boxes[0].parentWidget()
+    check("the option checkboxes form a compact group",
+          all(0 <= gap <= 12 for gap in gaps), True)
+    check("the option group leaves spare space on the right",
+          boxes[-1].geometry().right() < options_group.contentsRect().width() - 100, True)
 
     # --- 4: the dark toggle, its round trip, and its persistence
     written: list[dict] = []
