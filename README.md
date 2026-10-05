@@ -392,14 +392,25 @@ wpt-gui            # or: python3 -m wpt.gui
 
 Six tabs, in the order you use them, each a thin wrapper over the same core functions as the CLI:
 
-- **Environment**: the detected tree, prefix, Windows user and plugin directories; warns if msitools is
-  missing.
+- **Environment**: choose **Auto-detected** or a saved launch profile. *Manage profiles…* stores a
+  profile name, Wine prefix, custom Wine tree and literal `NAME=VALUE` environment overrides. The
+  selected prefix/tree are used by WPT operations and **Run in Standalone**, so inventory and launch
+  stay on the same prefix; environment overrides are passed only to **Run in Standalone**, not to
+  installs, repairs or uninstalls. They are literal environment variables only: WPT does not load or
+  modify a PipeASIO config file or audio routing. Changing prefix/tree clears prefix-derived lists and
+  reports; refresh those views before acting. Profiles live in `~/.config/wpt/launch_profiles.json`
+  (or `$XDG_CONFIG_HOME/wpt/launch_profiles.json`), with mode `0600`; values are plain text, so do not
+  store passwords or tokens. Overrides are literal, not shell commands, and cannot replace Wine's
+  selected prefix/runtime or its user identity. Already-open WPT windows keep their current stack until
+  **Re-detect**; stale profile writes are refused. Removing the active profile falls back to
+  Auto-detected with a warning. The Environment tab also shows the active tree, prefix, Windows user
+  and plugin directories, and warns if msitools is missing.
 - **Plugins**: the inventory. Kind, size, and an integrity verdict against the cached MSI (`ok`,
   `unverified`, `BROKEN`), plus a **State** column for disabled plugins. The buttons act on the
   selected row: *Repair selected from cached MSI*, *Disable (hide from DAW)* or *Enable*, *Uninstall*.
   Right-click a row for the same actions plus the file's path, preset sites, **Browse local files** and
   (when one exact-name `.exe` exists under this prefix's Program Files) **Run in Standalone** through
-  the detected custom Wine tree. Unverified MSI ownership is marked in the action; the app may contact
+  the selected profile's custom Wine tree and environment. Unverified MSI ownership is marked in the action; the app may contact
   its licensing service. `Program Files (x86)` is not searched. WPT reuses the selected Wine stack for
   ASIO, but does not install/configure PipeASIO or choose audio devices; set those up in Wine first.
 - **Download**: Neural DSP's catalogue, with version, release date, whether it is installed here and
@@ -430,9 +441,10 @@ unpublished branch it checks selected File-table paths, but **size is not a cont
   mapped MSI owner; `ok` means that **one file's size** agrees with its MSI row. It cannot prove
   its bytes are unchanged or that every optional MSI component was installed;
 - state is cross-checked two ways: the plugin directories (`list`) and the prefix registry (`scan`);
-- GUI **Run in Standalone** requires one exact-name, non-symlink `.exe` under this prefix's Program Files;
-  `Program Files (x86)` is not searched. It uses the detected custom Wine tree and refuses a verified
-  executable if its size changed since inventory (refresh to retry). Logs go to absolute
+- GUI **Run in Standalone** requires one exact-name, non-symlink `.exe` under the active profile's
+  Program Files; `Program Files (x86)` is not searched. It uses the selected profile's Wine tree,
+  prefix and standalone-only environment overrides, and refuses a verified executable if its size
+  changed since inventory (refresh to retry). Logs go to absolute
   `$XDG_CACHE_HOME/wpt/standalone/`; if it is unset or non-absolute, WPT falls back to
   `~/.cache/wpt/standalone/`. Logs are retained, not auto-pruned.
   This GUI blocks writes, second launches and update restarts while the launched Wine process group is alive.

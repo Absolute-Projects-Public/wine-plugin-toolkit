@@ -222,6 +222,8 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_refresh_repro.py     # overlapping r
 QT_QPA_PLATFORM=offscreen python3 tests/gui_startup_close_check.py # delayed catalogue callback must not run after close
 python3 tests/standalone_launch_check.py                          # unique match, prefix containment, custom Wine env; Popen mocked
 QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py # menu labels/availability; launch is mocked
+python3 tests/launch_profiles_check.py                             # profile schema, private/concurrent persistence, literal env parsing; temp home/prefix
+QT_QPA_PLATFORM=offscreen python3 tests/gui_launch_profiles_check.py # profile switching, stale-view invalidation, modal race, rename, standalone propagation; temp home/prefix
 python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
 python3 tests/preset_collision_check.py                         # changed preset in the same minute cannot overwrite a rescue
 python3 tests/uninstall_safety_check.py                         # CLI gates, unmapped roots, registration and rescue ordering

@@ -11,6 +11,8 @@ Named after what was reported or seen in a render:
    left, AAX hard right) - they belong in a group at the left.
 4. *Dark mode should be a header toggle, and must not be compulsory* - off by default (the window
    follows the desktop), reversible without a restart, and remembered.
+5. Long empty-state explanations use deliberate line breaks so the offscreen and narrow-window
+   renders cannot crop their ending.
 
     QT_QPA_PLATFORM=offscreen python3 tests/gui_layout_check.py
 """
@@ -61,6 +63,11 @@ def main() -> int:
         check(f"{name}: the note stands in its place", note.isVisible(), True)
         check(f"{name}: its columns keep a minimum width",
               table.horizontalHeader().minimumSectionSize() >= 64, True)
+        line_widths = [note.fontMetrics().horizontalAdvance(line) for line in note.text().splitlines()]
+        check(f"{name}: empty-state text fits without horizontal clipping",
+              max(line_widths, default=0) <= note.contentsRect().width(), True)
+        check(f"{name}: long empty-state copy uses explicit line breaks",
+              len(note.text().splitlines()) >= 2, True)
 
     # --- 1b: rows bring the table back and take the note away
     window.tabs.setCurrentIndex([window.tabs.tabText(i) for i in range(window.tabs.count())].index("Pending Install"))

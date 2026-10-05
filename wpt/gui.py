@@ -47,6 +47,9 @@ from .installers import match_download
 from . import inventory as inventory_mod
 from . import standalone as standalone_mod
 from . import updates as updates_mod
+from . import launch_profiles as launch_profiles_mod
+from .launch_profiles import ProfileConfigError, ProfileStore
+from .launch_profile_ui import LaunchProfilesDialog
 from . import msi as msi_mod
 from . import presets as presets_mod
 from . import products as products_mod
@@ -224,6 +227,8 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(980, 700)
         self.env = None
+        self.profile_store = ProfileStore()
+        self.profile_load_error: str | None = None
         self.plan = None
         self.inv = None
         self.worker: Worker | None = None
@@ -934,8 +939,21 @@ class MainWindow(QMainWindow):
     def _env_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Launch profile:"))
+        self.profile_combo = QComboBox()
+        self.profile_combo.setMinimumWidth(230)
+        self.profile_combo.currentIndexChanged.connect(self._profile_changed)
+        profile_row.addWidget(self.profile_combo)
+        self.btn_manage_profiles = QPushButton("Manage profiles…")
+        self.btn_manage_profiles.clicked.connect(lambda *_args: self.manage_launch_profiles())
+        profile_row.addWidget(self.btn_manage_profiles)
+        profile_row.addStretch(1)
+        layout.addLayout(profile_row)
+
         self.env_form = QFormLayout()
-        box = QGroupBox("Detected stack")
+        box = QGroupBox("Selected stack")
         box.setLayout(self.env_form)
         layout.addWidget(box)
 
@@ -949,26 +967,207 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return page
 
-    def refresh_env(self) -> None:
-        if self._workers or self._update_workers:
-            self.env_note.setText("Re-detect is paused while WPT background work is running; wait for it to finish.")
-            return
+    def refresh_env(self, _checked: bool = False) -> bool:
+        reason = self._profile_switch_block_reason()
+        if reason:
+            self.env_note.setText(f"Re-detect is paused: {reason}")
+            return False
+        previous_env = self.env
         while self.env_form.rowCount():
             self.env_form.removeRow(0)
         try:
-            self.env = detect()
-        except EnvironmentError_ as exc:
+            self.profile_store = launch_profiles_mod.load_store()
+            self.profile_load_error = None
+            self._populate_profile_combo()
+        except ProfileConfigError as exc:
+            self.profile_store = ProfileStore()
+            self.profile_load_error = str(exc)
+            self._populate_profile_combo()
             self.env = None
+            self._invalidate_profile_views("Launch profile configuration is invalid; fix it before using WPT.")
+            self.env_note.setText(f"Launch profile config error: {exc}")
+            return False
+        try:
+            profile = self._selected_profile()
+            self.env = profile.resolve() if profile else detect()
+        except (EnvironmentError_, ProfileConfigError) as exc:
+            self.env = None
+            self._invalidate_profile_views("Wine environment unavailable; choose a valid launch profile.")
             self.env_note.setText(f"Not detected: {exc}")
-            return
+            return False
         for key, value in self.env.describe().items():
             self.env_form.addRow(key.replace("_", " "), QLabel(value))
         missing = msi_mod.missing_tools()
-        self.env_note.setText(
+        status = (
             "msitools missing: " + ", ".join(missing) + "  ->  sudo pacman -S msitools"
             if missing
             else "msitools present. Wine tree, prefix and plugin directories all resolved."
         )
+        changed = previous_env is not None and (
+            previous_env.prefix != self.env.prefix or previous_env.wine_tree != self.env.wine_tree
+        )
+        if changed:
+            message = "Wine prefix or tree changed; refresh the prefix-derived lists before acting."
+            self._invalidate_profile_views(message)
+            status += " " + message
+        self.env_note.setText(status)
+        return True
+
+    def _populate_profile_combo(self) -> None:
+        was_blocked = self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        self.profile_combo.addItem("Auto-detected", None)
+        for profile in self.profile_store.profiles:
+            self.profile_combo.addItem(profile.name, profile.name)
+        selected = self.profile_combo.findData(self.profile_store.active)
+        self.profile_combo.setCurrentIndex(selected if selected >= 0 else 0)
+        self.profile_combo.blockSignals(was_blocked)
+
+    def _selected_profile(self):
+        name = self.profile_combo.currentData()
+        return next((profile for profile in self.profile_store.profiles if profile.name == name), None)
+
+    def _profile_switch_block_reason(self) -> str | None:
+        if self._workers or self._update_workers:
+            return "Wait for WPT background work to finish before switching launch profiles."
+        if self._active_standalone_launches():
+            return "Close standalone Wine process groups before switching the active prefix."
+        return None
+
+    def _restore_profile_selection(self) -> None:
+        was_blocked = self.profile_combo.blockSignals(True)
+        selected = self.profile_combo.findData(self.profile_store.active)
+        self.profile_combo.setCurrentIndex(selected if selected >= 0 else 0)
+        self.profile_combo.blockSignals(was_blocked)
+
+    def _invalidate_inventory(self, message: str) -> None:
+        self.inv = None
+        if not hasattr(self, "plugin_table"):
+            return
+        self.plugin_table.clearSelection()
+        self.plugin_table.setRowCount(0)
+        _show_rows(self.plugin_table, self.plugin_empty, 0)
+        self.plugin_summary.setText(message)
+        for name in ("btn_repair", "btn_disable", "btn_enable", "btn_uninstall"):
+            button = getattr(self, name, None)
+            if button is not None:
+                button.setEnabled(False)
+
+    def _invalidate_profile_views(self, message: str) -> None:
+        """Discard cached data derived from a prefix or Wine runtime that is no longer active."""
+        self._invalidate_inventory(message)
+        self.plan = None
+        if not hasattr(self, "msi_combo"):
+            return
+        self.msi_combo.clear()
+        if hasattr(self, "install_table"):
+            self.install_table.setRowCount(0)
+            _show_rows(self.install_table, self.install_empty, 0)
+            self.install_log.setPlainText(message)
+        if hasattr(self, "pending_table"):
+            self.pending_table.clearSelection()
+            self.pending_table.setRowCount(0)
+            _show_rows(self.pending_table, self.pending_empty, 0)
+            self.pending_summary.setText(message + " Press 'Find downloaded installers' to rescan.")
+            self.pending_log.setPlainText(message)
+            self.btn_install_pending.setEnabled(False)
+        if hasattr(self, "scan_table"):
+            self.scan_table.setRowCount(0)
+            _show_rows(self.scan_table, self.scan_empty, 0)
+            self.scan_summary.setText(message + " Rerun scan or triage to refresh.")
+            self.scan_products.setPlainText(message)
+        if hasattr(self, "download_table"):
+            self._msi_names = set()
+            self._installed_products = set()
+            self._downloads = {}
+            self._downloads_scan_running = False
+            self._seen_downloads = self._download_candidates()
+            self.download_table.clearSelection()
+            self.download_table.setRowCount(0)
+            _show_rows(self.download_table, self.download_empty, 0)
+            self.download_summary.setText(message + " Press 'Refresh catalogue' to recompute installed and local-installer status.")
+            self.download_log.setPlainText(message)
+
+    def _profile_changed(self, _index: int = -1) -> None:
+        if self.profile_load_error:
+            self._restore_profile_selection()
+            self.env_note.setText(f"Launch profile config error: {self.profile_load_error}")
+            return
+        selected = self.profile_combo.currentData()
+        if selected == self.profile_store.active:
+            return
+        reason = self._profile_switch_block_reason()
+        if reason:
+            self._restore_profile_selection()
+            self.env_note.setText(reason)
+            return
+        try:
+            store = ProfileStore(
+                self.profile_store.profiles,
+                active=selected,
+                source_digest=self.profile_store.source_digest,
+            )
+            store = launch_profiles_mod.save_store(store)
+        except ProfileConfigError as exc:
+            self._restore_profile_selection()
+            self.env_note.setText(f"Could not save launch profile selection: {exc}")
+            return
+        self.profile_store = store
+        self.refresh_env()
+
+    def manage_launch_profiles(self) -> None:
+        if self.profile_load_error:
+            self.env_note.setText(
+                f"Cannot edit profiles until the config is repaired: {self.profile_load_error}"
+            )
+            return
+        reason = self._profile_switch_block_reason()
+        if reason:
+            self.env_note.setText(reason)
+            return
+        previous_active = next(
+            (profile for profile in self.profile_store.profiles if profile.name == self.profile_store.active),
+            None,
+        )
+        previous_active_id = previous_active.profile_id if previous_active else None
+        dialog = LaunchProfilesDialog(self.profile_store.profiles, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        reason = self._profile_switch_block_reason()
+        if reason:
+            self.env_note.setText(
+                f"Profile changes were not saved because WPT activity started while the manager was open: {reason}"
+            )
+            return
+        active_profile = next(
+            (profile for profile in dialog.profiles if profile.profile_id == previous_active_id),
+            None,
+        )
+        active = active_profile.name if active_profile else None
+        try:
+            store = ProfileStore(
+                dialog.profiles,
+                active=active,
+                source_digest=self.profile_store.source_digest,
+            )
+            store = launch_profiles_mod.save_store(store)
+        except ProfileConfigError as exc:
+            self.env_note.setText(f"Could not save launch profiles: {exc}")
+            return
+        self.profile_store = store
+        self._populate_profile_combo()
+        current_active = next(
+            (profile for profile in store.profiles if profile.name == store.active), None
+        )
+        active_profile_removed = previous_active_id is not None and active_profile is None
+        if previous_active != current_active:
+            self.refresh_env()
+            if active_profile_removed:
+                self.env_note.setText(
+                    self.env_note.text().rstrip()
+                    + " The active profile was removed; WPT reverted to Auto-detected. "
+                    "Confirm the displayed prefix before continuing."
+                )
 
     # -------------------------------------------------------------- plugins
     def _plugins_tab(self) -> QWidget:
@@ -1044,8 +1243,8 @@ class MainWindow(QMainWindow):
         self.plugin_table.customContextMenuRequested.connect(self._plugin_context_menu)
         layout.addWidget(self.plugin_table, 2)
         self.plugin_empty = _empty_note(
-            "No inventory yet: press 'Refresh inventory' to list every plugin file in the prefix "
-            "and check each one's size against its cache MSI."
+            "No inventory yet: press 'Refresh inventory' to list every plugin file in the prefix.\n"
+            "Then check each one's size against its cache MSI."
         )
         layout.addWidget(self.plugin_empty, 2)
         _show_rows(self.plugin_table, self.plugin_empty, 0)
@@ -1645,8 +1844,8 @@ class MainWindow(QMainWindow):
 
         self.install_table = QTableWidget(0, 3)
         self.install_empty = _empty_note(
-            "No plan yet: pick an installer MSI above, then 'Preview plan' to see exactly which "
-            "files it would place before anything is written."
+            "No plan yet: pick an installer MSI above, then 'Preview plan'.\n"
+            "The preview lists each destination before anything is written."
         )
         layout.addWidget(self.install_empty, 2)
         _show_rows(self.install_table, self.install_empty, 0)
@@ -1932,6 +2131,11 @@ class MainWindow(QMainWindow):
         self.download_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.download_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.download_table.customContextMenuRequested.connect(self._download_context_menu)
+        self.download_empty = _empty_note(
+            "No catalogue rows loaded yet: press 'Refresh catalogue' to populate this list."
+        )
+        layout.addWidget(self.download_empty, 3)
+        _show_rows(self.download_table, self.download_empty, 0)
         layout.addWidget(self.download_table, 3)
 
         self.download_log = _log_pane("Job output appears here: catalogue refreshes and installer downloads.", 1000)
@@ -2147,6 +2351,7 @@ class MainWindow(QMainWindow):
                     cell.setData(Qt.ItemDataRole.UserRole + 1, str(installer))
                 self.download_table.setItem(row, column, cell)
 
+        _show_rows(self.download_table, self.download_empty, len(rows))
         self._restore_selection(keep)
         stamp = self._catalogue.fetched or "bundled snapshot"
         installed_here = sum(1 for r in rows if _key(r.product) in self._installed_products)
@@ -2394,7 +2599,7 @@ class MainWindow(QMainWindow):
         self.pending_table.setHorizontalHeaderLabels(["Status", "Product", "Version", "Kind", "File"])
         _fit_columns(self.pending_table, stretch={4: 300}, contents=(0, 1, 2, 3), elide={4: True})
         self.pending_empty = _empty_note(
-            "No installers waiting: press 'Find downloaded installers' to look in ~/Downloads "
+            "No installers waiting: press 'Find downloaded installers' to scan ~/Downloads\n"
             "and the prefix root for .msi / .exe files."
         )
         layout.addWidget(self.pending_empty, 2)
@@ -2552,8 +2757,8 @@ class MainWindow(QMainWindow):
 
         self.scan_table = QTableWidget(0, 2)
         self.scan_empty = _empty_note(
-            "Nothing scanned yet: 'Scan prefix for broken installs' lists every plugin path the "
-            "registry records and whether the file is actually on disk."
+            "Nothing scanned yet: press 'Scan prefix for broken installs'.\n"
+            "It lists registry paths and checks whether each file is on disk."
         )
         layout.addWidget(self.scan_empty, 1)
         _show_rows(self.scan_table, self.scan_empty, 0)

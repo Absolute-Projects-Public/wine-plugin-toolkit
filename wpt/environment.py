@@ -9,8 +9,34 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Mapping
+
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_RESERVED_ENV_NAMES = {
+    "HOME", "PATH", "WINE", "WINEPREFIX", "WINESERVER", "WINEDEBUG", "WINELOADER",
+    "WINEDLLPATH", "WINEARCH", "WINEDLLOVERRIDES", "WINELOADERNOEXEC",
+    "WINEPRELOADRESERVE", "WINEUSERNAME", "WINEHOMEDIR", "LD_PRELOAD", "LD_AUDIT",
+}
+_VALUE_LINEBREAKS = {0, 10, 11, 12, 13, 28, 29, 30, 133, 0x2028, 0x2029}
+
+
+def validate_env_overrides(values: Mapping[str, str]) -> dict[str, str]:
+    """Validate profile overrides without allowing them to replace the selected Wine runtime."""
+    if not isinstance(values, Mapping):
+        raise ValueError("environment overrides must be an object of NAME: value pairs")
+    result: dict[str, str] = {}
+    for name, value in values.items():
+        if not isinstance(name, str) or not _ENV_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid environment variable name: {name!r}")
+        if name.upper() in _RESERVED_ENV_NAMES:
+            raise ValueError(f"environment variable {name} is reserved by the selected Wine stack")
+        if not isinstance(value, str) or any(ord(char) in _VALUE_LINEBREAKS for char in value):
+            raise ValueError(f"environment value for {name} must be a single-line string without line separators")
+        result[name] = value
+    return result
+
 
 TREE_GLOB = "wine-d2d1-nspa-*"
 DEFAULT_PREFIX = "~/.wine-ableton"
@@ -76,6 +102,11 @@ class Environment:
     wine_tree: Path
     prefix: Path
     user: str
+    env_overrides: Mapping[str, str] = field(default_factory=dict, repr=False)
+    profile_name: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "env_overrides", validate_env_overrides(self.env_overrides))
 
     # ---- derived paths -------------------------------------------------
     @property
@@ -110,9 +141,11 @@ class Environment:
     def wine_binary(self) -> Path:
         return self.wine_tree / "bin" / "wine"
 
-    def wine_env(self) -> dict[str, str]:
-        """Environment for launching anything inside this prefix."""
+    def wine_env(self, *, include_profile_overrides: bool = False) -> dict[str, str]:
+        """Build a pinned Wine environment; profile overrides are opt-in for standalone launches."""
         env = dict(os.environ)
+        if include_profile_overrides:
+            env.update(self.env_overrides)
         env["WINEPREFIX"] = str(self.prefix)
         env["PATH"] = f"{self.wine_tree / 'bin'}:{env.get('PATH', '')}"
         env["WINESERVER"] = str(self.wine_tree / "bin" / "wineserver")
@@ -128,6 +161,7 @@ class Environment:
         return {
             "wpt": __version__,
             "python": platform.python_version(),
+            **({"profile": self.profile_name} if self.profile_name else {}),
             "home": str(self.home),
             "wine_tree": str(self.wine_tree),
             "prefix": str(self.prefix),
@@ -145,6 +179,8 @@ def detect(
     prefix: str | Path | None = None,
     wine_tree: str | Path | None = None,
     user: str | None = None,
+    env_overrides: Mapping[str, str] | None = None,
+    profile_name: str | None = None,
 ) -> Environment:
     """Locate the stack. Any argument left as None is auto-detected."""
     home_path = Path(home).expanduser() if home else Path.home()
@@ -168,6 +204,8 @@ def detect(
         wine_tree=tree,
         prefix=prefix_path,
         user=windows_user(prefix_path / "drive_c", user),
+        env_overrides=env_overrides or {},
+        profile_name=profile_name,
     )
 
 

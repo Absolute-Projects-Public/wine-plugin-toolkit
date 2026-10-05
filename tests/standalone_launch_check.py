@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wpt.environment import Environment
 from wpt.inventory import Inventory, PluginEntry
+from wpt.launch_profiles import LaunchProfile, resolve_profile
 from wpt.standalone import StandaloneLaunch, launch_standalone, resolve_standalone
 
 failures: list[str] = []
@@ -275,6 +276,25 @@ def main() -> int:
         check("log directory follows XDG_CACHE_HOME",
               launch.log_path.parent, env.home / "xdg-cache/wpt/standalone")
         check("launch log exists", launch.log_path.is_file(), True)
+
+        print("6b. Saved profile overrides reach the standalone Wine child")
+        profile = LaunchProfile(
+            "PipeASIO test",
+            str(env.prefix),
+            str(env.wine_tree),
+            {"PIPEWIRE_LATENCY": "128/48000", "LD_LIBRARY_PATH": "/profile/wine-libs"},
+        )
+        profiled_env = resolve_profile(profile, home=env.home)
+        with patch.dict(os.environ, {"XDG_CACHE_HOME": str(env.home / "profile-cache")}):
+            with patch("wpt.standalone.subprocess.Popen", return_value=FakeProcess()) as profile_popen:
+                profiled_launch = launch_standalone(profiled_env, exe, expected_size=10)
+        profiled_child_env = profile_popen.call_args.kwargs["env"]
+        check("profile identity follows the Wine child", profiled_env.profile_name, "PipeASIO test")
+        check("profile variable reaches standalone child", profiled_child_env["PIPEWIRE_LATENCY"], "128/48000")
+        check("profile library path reaches standalone child", profiled_child_env["LD_LIBRARY_PATH"], "/profile/wine-libs")
+        check("profile still pins the selected prefix", profiled_child_env["WINEPREFIX"], str(env.prefix))
+        check("profiled launch keeps the selected Wine binary", profile_popen.call_args.args[0][0], str(env.wine_binary))
+        profiled_launch.log_path.unlink(missing_ok=True)
 
         fallback_cache = env.home / ".cache/wpt/standalone"
         for label, xdg_cache in (("relative", "relative-cache"), ("empty", "")):

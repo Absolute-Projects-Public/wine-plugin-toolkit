@@ -157,7 +157,7 @@ def launch_standalone(
         raise ValueError(
             f"{resolved.name} changed size since the last inventory scan; refresh inventory before launch"
         )
-    child_env = env.wine_env()
+    child_env = env.wine_env(include_profile_overrides=True)
     for variable in (
         "WINELOADER",
         "WINEDLLPATH",
