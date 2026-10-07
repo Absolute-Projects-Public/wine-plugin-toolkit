@@ -24,7 +24,7 @@ options=('!strip')
 # The release asset, not GitHub's auto-generated tag archive: the asset is the exact tree this
 # package was built and tested from, and its hash is stable and verifiable.
 source=("wpt-$pkgver.tar.gz::https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/download/v$pkgver/wpt-$pkgver.tar.gz")
-sha256sums=('96d75ce28094dbfa54b84052513c0ee2475795b37c227bba16af5753349d5e31')
+sha256sums=('80c8d63b2445f4c1b40e09b9f6f8339b340af44c9270a37883c312d4a2d74747')
 
 check() {
     # The core suites are stdlib-only, so they run wherever this package is built.
