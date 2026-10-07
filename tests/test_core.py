@@ -887,7 +887,21 @@ try:
             check("a hung msiextract becomes an MsiError", "did not finish" in str(exc), True)
     code, detail = _installer.uninstall(_env_stub, "{whatever}")
     check("a hung uninstall reports a code instead of raising", code, 124)
-    check("and says nothing was removed", "nothing was removed" in detail, True)
+    check("a WPT timeout is not labelled as an msiexec exit",
+          _installer.uninstall_status_label(code, detail), "msiexec timed out (WPT code 124)")
+    check("a real vendor 124 is still labelled as an msiexec exit",
+          _installer.uninstall_status_label(124, "vendor uninstall returned status 124"),
+          "msiexec exited 124")
+    check("a hung uninstall reports unknown state", "uninstall state is unknown" in detail.casefold(), True)
+    check("a hung uninstall warns Wine processes may still be active",
+          "wine processes for this prefix may still be active" in detail.casefold(), True)
+    check("a hung uninstall asks users to wait before checking or retrying",
+          "confirm they have stopped before inspecting the product and its files or retrying"
+          in detail.casefold(), True)
+    detail_lower = detail.casefold()
+    no_removal_claims = ("nothing was removed", "nothing has been removed", "no files were removed")
+    check("a hung uninstall avoids false no-removal claims",
+          not any(claim in detail_lower for claim in no_removal_claims), True)
     rows = _installer.purge_registry(_env_stub, [type("Ed", (), {
         "target": "HKLM\\Software\\X", "reason": "test",
         "command": staticmethod(lambda _b: ["wine", "reg", "delete", "x"])})()])

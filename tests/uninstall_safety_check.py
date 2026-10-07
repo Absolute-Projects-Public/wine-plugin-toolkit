@@ -176,7 +176,9 @@ def unregistered_product_skips_msiexec() -> None:
     print("ok an unregistered product skips the external MSI engine")
 
 
-def failed_vendor_uninstall_skips_registry_purge() -> None:
+def failed_vendor_uninstall_skips_registry_purge(
+        code: int = 1603, detail: str = "vendor uninstall failed",
+        expected_status: str = "msiexec exited 1603") -> None:
     with tempfile.TemporaryDirectory(prefix="wpt-purge-msiexec-fail-") as tmp:
         base = Path(tmp)
         env = Environment(home=base, prefix=base / "prefix", user="tester", wine_tree=base / "tree")
@@ -195,7 +197,7 @@ def failed_vendor_uninstall_skips_registry_purge() -> None:
               patch.object(cli, "build_plan", return_value=plan),
               patch.object(cli.scan_mod, "is_registered", return_value=True),
               patch.object(cli.inventory_mod, "mark_cross_product_claims", return_value=set()),
-              patch.object(cli, "uninstall_product", return_value=(1603, "vendor uninstall failed")),
+              patch.object(cli, "uninstall_product", return_value=(code, detail)),
               patch.object(cli.presets_mod, "rescue_for_plan", return_value=([], [], [])),
               patch.object(cli.installer_mod, "remove_files", return_value=[]),
               patch.object(cli.installer_mod, "leftovers", return_value=[]),
@@ -205,8 +207,10 @@ def failed_vendor_uninstall_skips_registry_purge() -> None:
             result = cli.cmd_uninstall(args)
         assert result != 0
         assert not stale.called and not purge.called, (stale.call_args_list, purge.call_args_list)
-        assert "msiexec exited 1603" in error.getvalue(), error.getvalue()
-    print("ok a failed vendor uninstall skips direct removal and registry purge")
+        assert expected_status in error.getvalue(), error.getvalue()
+        if expected_status == "msiexec timed out (WPT code 124)":
+            assert "msiexec exited 124" not in error.getvalue(), error.getvalue()
+    print("ok failed vendor uninstall skips direct removal and registry purge")
 
 
 def successful_msiexec_must_clear_registration_before_followup() -> None:
@@ -432,10 +436,15 @@ if __name__ == "__main__":
     refused_removal_is_not_a_success()
     unregistered_product_skips_msiexec()
     failed_vendor_uninstall_skips_registry_purge()
+    failed_vendor_uninstall_skips_registry_purge(
+        124, f"{cli.installer_mod.UNINSTALL_TIMEOUT_DETAIL_PREFIX} wine msiexec /x exceeded 600s; "
+             "uninstall state is unknown", "msiexec timed out (WPT code 124)")
+    failed_vendor_uninstall_skips_registry_purge(
+        124, "vendor uninstall returned status 124", "msiexec exited 124")
     successful_msiexec_must_clear_registration_before_followup()
     unmapped_msi_root_refuses_registered_vendor_uninstall()
     invalid_manifest_aborts_before_vendor_removal()
     table_only_plan_preserves_data_before_registered_uninstall()
     shared_product_path_aborts_before_registered_uninstall()
     symlinked_destination_aborts_before_registered_uninstall()
-    print("uninstall safety check: 12/12 passed")
+    print("uninstall safety check: 14/14 passed")

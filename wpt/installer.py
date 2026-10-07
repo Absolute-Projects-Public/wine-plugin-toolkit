@@ -924,6 +924,9 @@ def _safe_size(path: Path) -> int | None:
         return None
 
 
+UNINSTALL_TIMEOUT_DETAIL_PREFIX = "WPT timeout:"
+
+
 def uninstall(env: Environment, product_code: str, dry_run: bool = False) -> tuple[int, str]:
     """Remove a product through Windows Installer, inside the prefix.
 
@@ -947,13 +950,21 @@ def uninstall(env: Environment, product_code: str, dry_run: bool = False) -> tup
             command, env=env.wine_env(), capture_output=True, text=True, timeout=600
         )
     except subprocess.TimeoutExpired:
-        # a stuck wineserver is common on a prefix in a bad state; say so rather than raising,
-        # because the caller has to tell the user how far the uninstall got (usually nowhere)
-        return 124, f"{env.wine_binary.name} msiexec /x did not finish within 600s - nothing was removed"
+        # Killing the direct child does not prove the prefix is idle or unchanged.
+        return 124, (f"{UNINSTALL_TIMEOUT_DETAIL_PREFIX} {env.wine_binary.name} msiexec /x exceeded 600s; "
+                     "uninstall state is unknown. Wine processes for this prefix may still be active. "
+                     "Confirm they have stopped before inspecting the product and its files or retrying.")
     except OSError as exc:
         return 125, f"could not run wine: {exc}"
     detail = (proc.stdout or "").strip() or (proc.stderr or "").strip()
     return proc.returncode, detail
+
+
+def uninstall_status_label(code: int, detail: str) -> str:
+    """Label WPT's synthesized timeout status without misreporting an msiexec exit."""
+    if code == 124 and detail.startswith(UNINSTALL_TIMEOUT_DETAIL_PREFIX):
+        return "msiexec timed out (WPT code 124)"
+    return f"msiexec exited {code}"
 
 
 DISABLED_SUFFIX = ".disabled"

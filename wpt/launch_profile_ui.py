@@ -64,7 +64,7 @@ class ProfileEditorDialog(QDialog):
 
         note = QLabel(
             f"Saved to {profile_config_path()}. Literal overrides affect Run in Standalone only; no shell expansion. "
-            "The profile file uses mode 0600, but values are plain text—do not put passwords or tokens here."
+            "The profile file uses mode 0600. Values are plain text, so do not put passwords or tokens here."
         )
         note.setWordWrap(True)
         layout.addWidget(note)

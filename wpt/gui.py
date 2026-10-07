@@ -1666,10 +1666,11 @@ class MainWindow(QMainWindow):
                 code, detail = uninstall_product(uninstall_env, product_code)
                 if detail:
                     emit(detail)
-                emit(f"msiexec exited {code}")
+                status = installer_mod.uninstall_status_label(code, detail)
+                emit(status)
                 if code != 0:
                     raise RuntimeError(
-                        f"msiexec exited {code}; direct file removal and registry purge were skipped"
+                        f"{status}; direct file removal and registry purge were skipped"
                     )
                 try:
                     still_registered = scan_mod.is_registered(uninstall_env, product_code)

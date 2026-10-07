@@ -757,7 +757,8 @@ def cmd_uninstall(args) -> int:
         if detail:
             print(detail)
         if not args.dry_run and code != 0:
-            print(f"msiexec exited {code} although the product was registered; "
+            status = installer_mod.uninstall_status_label(code, detail)
+            print(f"{status} although the product was registered; "
                   "direct file removal and registry purge were skipped", file=sys.stderr)
             return 1
         if not args.dry_run:

@@ -25,7 +25,8 @@ from wpt.installer import Action, Plan  # noqa: E402
 
 
 def run(fail_rescue: bool = False, *, shared: bool = False, table_only: bool = False,
-        unmapped: bool = False, fail_msiexec: bool = False, still_registered: bool = False,
+        unmapped: bool = False, fail_msiexec: bool = False, timeout_msiexec: bool = False,
+        vendor_124: bool = False, still_registered: bool = False,
         registration_unreadable: bool = False, registered: bool = True) -> None:
     with tempfile.TemporaryDirectory(prefix="wpt-gui-uninstall-") as tmp:
         base = Path(tmp)
@@ -58,6 +59,13 @@ def run(fail_rescue: bool = False, *, shared: bool = False, table_only: bool = F
             events.append("msiexec")
             if preset.exists():
                 preset.unlink()
+            if timeout_msiexec:
+                return 124, (f"{gui_mod.installer_mod.UNINSTALL_TIMEOUT_DETAIL_PREFIX} "
+                             "wine msiexec /x exceeded 600s; uninstall state is unknown. "
+                             "Wine processes for this prefix may still be active. "
+                             "Confirm they have stopped before inspecting the product and its files or retrying.")
+            if vendor_124:
+                return 124, "vendor uninstall returned status 124"
             if fail_msiexec:
                 return 1603, "simulated vendor uninstall failure"
             return 0, "simulated vendor removal"
@@ -96,7 +104,7 @@ def run(fail_rescue: bool = False, *, shared: bool = False, table_only: bool = F
             app.processEvents()
             window.env = env
             window.refresh_plugins = lambda: None  # inventory rescan is unrelated to ordering
-            window.cb_purge.setChecked(fail_msiexec)
+            window.cb_purge.setChecked(fail_msiexec or timeout_msiexec or vendor_124)
             window._confirm_uninstall(fake_msi, identity, registered=registered)
             deadline = time.monotonic() + 20
             while window._jobs_running() and time.monotonic() < deadline:
@@ -117,11 +125,18 @@ def run(fail_rescue: bool = False, *, shared: bool = False, table_only: bool = F
                 assert events == ["rescue", "direct-remove"] and preset.exists(), (
                     events, window.plugin_log.toPlainText())
                 assert "skipping msiexec /x" in window.plugin_log.toPlainText()
-            elif fail_msiexec:
+            elif fail_msiexec or timeout_msiexec or vendor_124:
                 assert events == ["rescue", "msiexec"], events
                 assert not stale.called and not purge.called
-                assert "uninstall failed" in window.plugin_log.toPlainText()
-                assert "direct file removal and registry purge were skipped" in window.plugin_log.toPlainText()
+                log_text = window.plugin_log.toPlainText()
+                assert "uninstall failed" in log_text
+                assert "direct file removal and registry purge were skipped" in log_text
+                if timeout_msiexec:
+                    assert "msiexec timed out (WPT code 124)" in log_text, log_text
+                    assert "msiexec exited 124" not in log_text, log_text
+                if vendor_124:
+                    assert "msiexec exited 124" in log_text, log_text
+                    assert "msiexec timed out (WPT code 124)" not in log_text, log_text
                 assert saved and saved[0].read_text() == "my work", saved
             elif still_registered:
                 assert events == ["rescue", "msiexec"] and not stale.called and not purge.called, events
@@ -133,7 +148,11 @@ def run(fail_rescue: bool = False, *, shared: bool = False, table_only: bool = F
                 assert events.index("rescue") < events.index("msiexec"), events
                 assert len(saved) == 1 and saved[0].read_text() == "my work", (events, saved)
             window.close()
-    print("ok GUI " + ("failed rescue aborts" if fail_rescue else "rescue precedes vendor removal"))
+    label = ("failed rescue aborts" if fail_rescue else
+             "timeout remains fail-closed" if timeout_msiexec else
+             "vendor 124 remains an exit code" if vendor_124 else
+             "rescue precedes vendor removal")
+    print("ok GUI " + label)
 
 
 def symlinked_destination_aborts_before_vendor_uninstall() -> None:
@@ -202,6 +221,8 @@ if __name__ == "__main__":
     run()
     run(fail_rescue=True)
     run(fail_msiexec=True)
+    run(timeout_msiexec=True)
+    run(vendor_124=True)
     run(shared=True)
     run(table_only=True)
     run(unmapped=True)
@@ -209,4 +230,4 @@ if __name__ == "__main__":
     run(registration_unreadable=True)
     run(registered=False)
     symlinked_destination_aborts_before_vendor_uninstall()
-    print("GUI uninstall safety: 10/10 passed (offscreen, simulated vendor)")
+    print("GUI uninstall safety: 12/12 passed (offscreen, simulated vendor)")

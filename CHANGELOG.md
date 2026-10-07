@@ -27,8 +27,12 @@ Selectable Wine/prefix profiles, clearer setup guidance and stricter release che
   Launch output is captured in the WPT cache.
 - **MSI file planning and removal safeguards** now account for full paths and ownership ambiguity, keep
   no-clobber or uncertain files, and fail closed on incomplete ownership scans or redirected paths.
-  Preset rescue is attempted before Wine removal; it is not a guarantee of complete backup, and live
-  vendor/uninstall behavior has not been broadly validated.
+  Preset rescue is attempted before Wine removal; it is not a guarantee of complete backup. These
+  safeguards have been tested only with synthetic fixtures; no live vendor prefix has been uninstalled
+  with this version. An `msiexec /x` timeout is labelled WPT code 124, not an msiexec exit code. The
+  `wpt uninstall` CLI exits 1, reports the removal state as unknown, and skips direct file removal and
+  registry purge. Wine processes for the prefix may remain active; confirm they have stopped and verify
+  the product and its files before retrying.
 - **Btrfs case-fold lookups** use fresh directory handles, avoiding stale stream offsets on repeated scans.
 - **Release scripts** verify version consistency, committed source inputs and tarball pins. The
   suite runner checks the exact source/package assets and both checksums, resolves relative paths from

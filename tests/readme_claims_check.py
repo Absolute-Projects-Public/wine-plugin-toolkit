@@ -271,8 +271,14 @@ def run() -> None:
     public_docs = [README, ROOT / "CHANGELOG.md", ROOT / "TESTING.md", ROOT / "CONTRIBUTING.md",
                    ROOT / "docs" / "CLAIMS.md", ROOT / "docs" / "DESIGN.md",
                    ROOT / "docs" / "REVIEW-BRIEF.md"]
-    check(all("—" not in path.read_text(encoding="utf-8") for path in public_docs),
-          "shipped documentation contains no em dashes")
+    def contains_em_dash(text: str) -> bool:
+        return "\u2014" in text
+
+    check(contains_em_dash("synthetic\u2014control"),
+          "em-dash detector catches a synthetic control")
+    public_copy = public_docs + sorted((ROOT / "wpt").rglob("*.py"))
+    check(all(not contains_em_dash(path.read_text(encoding="utf-8")) for path in public_copy),
+          "shipped documentation and application source contain no em dashes")
     check("Python 3.11 or newer" in testing and "3.14 works" not in testing
           and "shibco/ableton-linux" in testing and "bin/wine" in testing
           and "python3 -m venv .venv" in testing,
