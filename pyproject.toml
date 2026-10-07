@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wine-plugin-toolkit"
-version = "0.6.4"
+version = "0.6.5"
 description = "Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
 readme = "README.md"
 requires-python = ">=3.11"

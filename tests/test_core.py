@@ -157,27 +157,43 @@ import tempfile as _tempfile  # noqa: E402
 
 from wpt import msi as msi_mod  # noqa: E402
 
-_tmp = Path(_tempfile.mkdtemp())
-_scratch = _tmp / "wpt-extract"
-(_scratch / "VST3DIR").mkdir(parents=True)
-(_scratch / "VST3DIR" / "leftover.vst3").write_text("stale")
-msi_mod.prepare_scratch(_scratch)
-check("stale extraction under the temp dir is wiped", (_scratch / "VST3DIR").exists(), False)
-check("wpt marks the scratch dir as its own", (_scratch / msi_mod.EXTRACT_MARKER).is_file(), True)
-(_scratch / "VST3DIR").mkdir()
-check("the marker file is not mistaken for an extracted folder",
-      msi_mod.extracted_root_dirs(_scratch), ["VST3DIR"])
-
-_precious = Path.home() / "wpt-scratch-refusal-test"
-_shutil.rmtree(_precious, ignore_errors=True)
-_precious.mkdir(parents=True)
-(_precious / "notes.txt").write_text("real data")
+_real_gettempdir = _tempfile.gettempdir
+_real_home = os.environ.get("HOME")
+_test_root = Path(_tempfile.mkdtemp(prefix="wpt-core-scratch-safety-"))
+_test_temp_root = _test_root / "tmp"
+_test_home = _test_root / "home"
+_foreign_root = _test_root / "foreign"
+for _directory in (_test_temp_root, _test_home, _foreign_root):
+    _directory.mkdir()
+_tempfile.gettempdir = lambda: str(_test_temp_root)
+os.environ["HOME"] = str(_test_home)
 try:
-    msi_mod.prepare_scratch(_precious)
-    check("a non-empty dir outside temp is refused", "no error raised", "MsiError")
-except msi_mod.MsiError:
-    check("a non-empty dir outside temp is refused", True, True)
-check("the refused directory is untouched", (_precious / "notes.txt").exists(), True)
+    _scratch = _test_temp_root / "wpt-extract"
+    (_scratch / "VST3DIR").mkdir(parents=True)
+    (_scratch / "VST3DIR" / "leftover.vst3").write_text("stale")
+    msi_mod.prepare_scratch(_scratch)
+    check("stale extraction under the temp dir is wiped", (_scratch / "VST3DIR").exists(), False)
+    check("wpt marks the scratch dir as its own", (_scratch / msi_mod.EXTRACT_MARKER).is_file(), True)
+    (_scratch / "VST3DIR").mkdir()
+    check("the marker file is not mistaken for an extracted folder",
+          msi_mod.extracted_root_dirs(_scratch), ["VST3DIR"])
+
+    _precious = _foreign_root / "wpt-scratch-refusal-test"
+    _precious.mkdir()
+    (_precious / "notes.txt").write_text("real data")
+    try:
+        msi_mod.prepare_scratch(_precious)
+        check("a non-empty dir outside temp and home is refused", "no error raised", "MsiError")
+    except msi_mod.MsiError:
+        check("a non-empty dir outside temp and home is refused", True, True)
+    check("the refused directory is untouched", (_precious / "notes.txt").exists(), True)
+finally:
+    _tempfile.gettempdir = _real_gettempdir
+    if _real_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _real_home
+    _shutil.rmtree(_test_root, ignore_errors=True)
 print("vendor catalogue (the downloads page)")
 from wpt import catalogue as catalogue_mod  # noqa: E402
 from wpt import wrappers as wrappers_mod  # noqa: E402
@@ -405,8 +421,6 @@ _sh3.rmtree(_payload_only, ignore_errors=True)
 _sh3.rmtree(_cache, ignore_errors=True)
 _sh3.rmtree(_home_scratch, ignore_errors=True)
 
-_shutil.rmtree(_precious, ignore_errors=True)
-_shutil.rmtree(_tmp, ignore_errors=True)
 
 print("where a package's payload goes, and whether it is a plugin at all")
 from wpt.installer import Action as _Action  # noqa: E402
@@ -791,44 +805,57 @@ print("scratch safety")
 # True for equal paths, so the temp root itself once passed the "scratch-like" test and was wiped.
 from wpt import msi as _msi  # noqa: E402
 
-for protected in (Path(_tempfile.gettempdir()), Path("/"), Path.home()):
-    try:
-        _msi.prepare_scratch(protected)
-        check(f"prepare_scratch refuses to empty {protected}", False, True)
-    except _msi.MsiError as exc:
-        check(f"prepare_scratch refuses to empty {protected}", "refusing" in str(exc), True)
-
-# a real scratch directory still works, and still gets cleared
-_scratch = Path(_tempfile.mkdtemp()) / "wpt-extract"
-_scratch.mkdir()
-(_scratch / "leftover-from-last-time").write_text("stale")
-_msi.prepare_scratch(_scratch)
-check("an ordinary scratch directory is emptied", list(_scratch.glob("leftover*")), [])
-check("and marked as ours", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
-_msi.prepare_scratch(_scratch)   # second call: ours, so still allowed
-check("a marked directory can be reused", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
-
-# a directory under the temp root that is not ours is scratch-like and allowed to be cleared
-_under = Path(_tempfile.mkdtemp()) / "sub" / "deeper"
-_under.mkdir(parents=True)
-(_under / "x").write_text("y")
-_msi.prepare_scratch(_under)
-check("a subdirectory of the temp root is treated as scratch", (_under / _msi.EXTRACT_MARKER).is_file(), True)
-
-# a non-empty directory outside the temp root is refused outright (anything *under* the temp root
-# is considered disposable by design, which is why this one lives elsewhere)
-_elsewhere = Path(_tempfile.mkdtemp(dir=str(Path.home()))) / "someone-elses-data"
-_elsewhere.mkdir()
-(_elsewhere / "important").write_text("do not delete")
+# Use separate synthetic HOME and temp roots, even when the caller's HOME is itself below /tmp.
+# This tests the same guard without ever touching the invoking user's directories.
+_real_gettempdir = _tempfile.gettempdir
+_test_temp_root = Path(_tempfile.mkdtemp(prefix="wpt-core-temp-root-"))
+_test_home = Path(_tempfile.mkdtemp(prefix="wpt-core-home-"))
+_saved_home = os.environ.get("HOME")
+_tempfile.gettempdir = lambda: str(_test_temp_root)
+os.environ["HOME"] = str(_test_home)
 try:
-    _msi.prepare_scratch(_elsewhere)
-    check("a non-empty foreign directory is refused", False, True)
-except _msi.MsiError as exc:
-    check("a non-empty foreign directory is refused", "not created by wpt" in str(exc), True)
-    check("and is left exactly as it was", (_elsewhere / "important").read_text(), "do not delete")
-import shutil as _sh6  # noqa: E402
-_sh6.rmtree(_elsewhere.parent, ignore_errors=True)
+    for protected in (Path(_tempfile.gettempdir()), Path("/"), Path.home()):
+        try:
+            _msi.prepare_scratch(protected)
+            check(f"prepare_scratch refuses to empty {protected}", False, True)
+        except _msi.MsiError as exc:
+            check(f"prepare_scratch refuses to empty {protected}", "refusing" in str(exc), True)
 
+    # a real scratch directory still works, and still gets cleared
+    _scratch = Path(_tempfile.mkdtemp()) / "wpt-extract"
+    _scratch.mkdir()
+    (_scratch / "leftover-from-last-time").write_text("stale")
+    _msi.prepare_scratch(_scratch)
+    check("an ordinary scratch directory is emptied", list(_scratch.glob("leftover*")), [])
+    check("and marked as ours", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
+    _msi.prepare_scratch(_scratch)   # second call: ours, so still allowed
+    check("a marked directory can be reused", (_scratch / _msi.EXTRACT_MARKER).is_file(), True)
+
+    # a directory under the temp root that is not ours is scratch-like and allowed to be cleared
+    _under = Path(_tempfile.mkdtemp()) / "sub" / "deeper"
+    _under.mkdir(parents=True)
+    (_under / "x").write_text("y")
+    _msi.prepare_scratch(_under)
+    check("a subdirectory of the temp root is treated as scratch", (_under / _msi.EXTRACT_MARKER).is_file(), True)
+
+    # A non-empty directory outside the temp root is refused outright.
+    _elsewhere = Path(_tempfile.mkdtemp(dir=str(_test_home))) / "someone-elses-data"
+    _elsewhere.mkdir()
+    (_elsewhere / "important").write_text("do not delete")
+    try:
+        _msi.prepare_scratch(_elsewhere)
+        check("a non-empty foreign directory is refused", False, True)
+    except _msi.MsiError as exc:
+        check("a non-empty foreign directory is refused", "not created by wpt" in str(exc), True)
+        check("and is left exactly as it was", (_elsewhere / "important").read_text(), "do not delete")
+finally:
+    _tempfile.gettempdir = _real_gettempdir
+    if _saved_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = _saved_home
+    _shutil.rmtree(_test_temp_root, ignore_errors=True)
+    _shutil.rmtree(_test_home, ignore_errors=True)
 print("msitools failures are stated, not raised")
 from wpt import installer as _installer  # noqa: E402
 import subprocess as _sp  # noqa: E402

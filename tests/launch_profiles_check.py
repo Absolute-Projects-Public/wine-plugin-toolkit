@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix="wpt-launch-profiles-") as tmp:
     config_home.mkdir(parents=True)
     config_file = config_home / "wpt" / "launch_profiles.json"
     tree = home / ".local/opt/wine-d2d1-nspa-test"
-    prefix = home / ".wine-mantra"
+    prefix = home / "synthetic-prefix"
     (tree / "bin").mkdir(parents=True)
     (tree / "bin/wine").write_text("#!/bin/sh\nexit 0\n")
     (tree / "bin/wine").chmod(0o755)

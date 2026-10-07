@@ -12,15 +12,27 @@
 # unavailable gh or unexpected API response stops here rather than guessing from local tags.
 #
 # The package asset is the one that matters to `wpt update`: every release must attach
-# wine-plugin-toolkit-<version>-1-any.pkg.tar.zst or the updater has nothing to install.
+# wine-plugin-toolkit-<version>-<pkgrel>-any.pkg.tar.zst or the updater has nothing to install.
 set -euo pipefail
+CALLER_PWD=$(pwd -P)
+TMPDIR_BASE="${TMPDIR:-/tmp}"
+if [[ "$TMPDIR_BASE" != /* ]]; then TMPDIR_BASE="$CALLER_PWD/$TMPDIR_BASE"; fi
+export TMPDIR="$TMPDIR_BASE"
 cd "$(dirname "$0")/.."
 
-# Importing wpt writes __pycache__ on machines without PYTHONDONTWRITEBYTECODE and makes a clean
-# checkout dirty before make-tarball.sh runs. Read the same pkgver the tarball builder uses.
+# Read pkgver directly so the release gate and tarball builder use the same declared version.
 VERSION=$(sed -n 's/^pkgver=//p' PKGBUILD)
+PKGREL=$(sed -n 's/^pkgrel=//p' PKGBUILD)
+if [[ ! "$PKGREL" =~ ^[0-9]+$ ]]; then
+    echo "PKGBUILD has no numeric pkgrel; refusing to continue" >&2
+    exit 2
+fi
 REPO="Absolute-Projects-Public/wine-plugin-toolkit"
 TARBALL="dist/wpt-$VERSION.tar.gz"
+ARCHIVE_DIR="${WPT_ARCHIVE_DIR:-$HOME/wpt-pkg}"
+if [[ "$ARCHIVE_DIR" != /* ]]; then
+    ARCHIVE_DIR="$CALLER_PWD/$ARCHIVE_DIR"
+fi
 if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
     echo "refusing to publish $VERSION: tag already exists; choose a new version" >&2
     exit 2
@@ -63,18 +75,23 @@ echo "      bash packaging/build-local.sh"
 
 cat <<EOF
 
-==> also write the package's checksum (the updater verifies against it):
-      ( cd ~/wpt-pkg && sha256sum "wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst" \
-            > "wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst.sha256" )
+==> packaging/build-local.sh writes source and package checksum files under:
+      $ARCHIVE_DIR
+
+==> run the extracted-tarball gate on an Arch-family machine with the updater assets required:
+  export WPT_RELEASE_DIR=/path/to/extracted-candidate
+  export WPT_RELEASE_ASSET_DIR="$ARCHIVE_DIR"
+  export WPT_REQUIRE_UPDATER_E2E=1
+  bash "\$WPT_RELEASE_DIR/packaging/run-suites.sh" "\$WPT_RELEASE_DIR"
 
 ==> publish
   1. confirm the clean committed tree, fixed-point pin, and full extracted-tarball gate
   2. git tag -a v$VERSION -m "wpt $VERSION" && push fast-forward from the publishing machine
   3. create the GitHub release for v$VERSION and attach:
-       $TARBALL                     (source)
-       dist/wpt-$VERSION.tar.gz.sha256
-       wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst.sha256
-       wine-plugin-toolkit-$VERSION-1-any.pkg.tar.zst   (what 'wpt update' installs)
+       $ARCHIVE_DIR/wpt-$VERSION.tar.gz
+       $ARCHIVE_DIR/wpt-$VERSION.tar.gz.sha256
+       $ARCHIVE_DIR/wine-plugin-toolkit-$VERSION-$PKGREL-any.pkg.tar.zst.sha256
+       $ARCHIVE_DIR/wine-plugin-toolkit-$VERSION-$PKGREL-any.pkg.tar.zst   (what 'wpt update' installs)
   4. verify with a machine that has an older wpt installed:
        wpt update
 EOF

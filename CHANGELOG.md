@@ -3,6 +3,48 @@
 All notable changes to this project. Versions that were rebuilt during a session without a
 release are not listed separately - what matters is what a published version contains.
 
+## 0.6.5
+
+Selectable Wine/prefix profiles, clearer setup guidance and stricter release checks.
+
+- **README navigation and setup** now include a linked contents menu and state the external
+  ableton-linux Wine tree and initialized-prefix requirements. WPT does not bundle the patched Wine
+  runtime. Install examples verify the exact source or package asset, and the source build reuses the
+  verified download rather than fetching another copy.
+- **Doctor overrides** now reach the environment check through global `--home`, `--prefix`, `--tree`
+  and `--user` options. The docs narrow `--home` to discovery and the doctor rescue-store check,
+  and warn that the check may use a different store from the one uninstall writes.
+- **Saved GUI launch profiles** let users choose a Wine tree and prefix. Literal environment overrides are
+  applied only to *Run in Standalone*; installer, repair, uninstall and wrapper operations keep the
+  base environment. Profile changes invalidate prefix-derived views and are refused while tracked work
+  or standalone process groups are active. Concurrent profile edits fail closed rather than overwriting.
+- **GUI Run in Standalone** uses the selected Wine stack, resolves one exact inventoried executable,
+  and refuses ambiguous, symlinked or out-of-prefix targets. Within one WPT window, multiple launches use
+  its active profile; tracked groups block prefix writes, profile changes and update restarts while active.
+  Each launcher starts in a separate process session, and WPT does not signal it when the window closes.
+  Closing ends that window's tracking; reopened or separate WPT windows do not rediscover prior launches.
+  Vendor apps may impose their own concurrency limit; helpers and licensing services may outlive tracking.
+  Launch output is captured in the WPT cache.
+- **MSI file planning and removal safeguards** now account for full paths and ownership ambiguity, keep
+  no-clobber or uncertain files, and fail closed on incomplete ownership scans or redirected paths.
+  Preset rescue is attempted before Wine removal; it is not a guarantee of complete backup, and live
+  vendor/uninstall behavior has not been broadly validated.
+- **Btrfs case-fold lookups** use fresh directory handles, avoiding stale stream offsets on repeated scans.
+- **Release scripts** verify version consistency, committed source inputs and tarball pins. The
+  suite runner checks the exact source/package assets and both checksums, resolves relative paths from
+  the caller, writes logs into unique directories, prunes its separate scratch directory on exit, and
+  can require the updater gate instead of allowing a source-only skip. `packaging/scan-identifiers.py`
+  is a separate manual pre-release check.
+- **Local Arch builds** now verify the source tarball against the `PKGBUILD` pin, stage `makepkg`
+  inputs/outputs under temporary directories, isolate HOME/XDG/WINEPREFIX and release-test paths,
+  resolve relative archive paths from the caller, and stage artifacts before atomic per-file promotion.
+  It refuses symlinked/non-regular sidecar destinations and conflicting same-version assets, then
+  creates checksum files for both assets. The helper refuses forwarded `makepkg` options;
+  `make-tarball.sh` is source-only and rejects legacy `--build`.
+- **Wine runtime packaging** no longer lists generic system `wine` as an optional dependency. WPT uses
+  the separately staged ableton-linux Wine tree instead. Core-test scratch-refusal cases use isolated
+  locations rather than deleting or writing named paths in the user's home directory.
+
 ## 0.6.4
 
 Two ways the toolkit could leave a product stuck, both reproduced on a real prefix and fixed

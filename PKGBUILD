@@ -4,7 +4,7 @@
 # -- a tarball cannot carry a hash of itself; this one, in git, pins it.
 # For a local test build of an unreleased tree, use packaging/build-local.sh instead.
 pkgname=wine-plugin-toolkit
-pkgver=0.6.4
+pkgver=0.6.5
 pkgrel=1
 pkgdesc="Install, repair and inventory Windows audio plugins in an ableton-linux Wine prefix"
 arch=('any')
@@ -17,7 +17,6 @@ optdepends=(
     'cabextract: unpack CAB and IExpress wrappers, and the cabinets inside them, without Wine'
     'innoextract: unpack Inno Setup wrappers without Wine'
     'unshield: unpack InstallShield wrappers without Wine'
-    'wine: run vendor installers that cannot be unpacked on Linux'
 )
 provides=('wpt')
 options=('!strip')

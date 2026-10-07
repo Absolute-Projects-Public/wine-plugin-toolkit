@@ -978,7 +978,13 @@ def cmd_update(args) -> int:
 
 def cmd_doctor(args) -> int:
     """Say what this machine has, and what is wrong with it. Read-only, ever."""
-    report = doctor_mod.run(scratch=Path(args.scratch).expanduser() if args.scratch else None)
+    report = doctor_mod.run(
+        scratch=Path(args.scratch).expanduser() if args.scratch else None,
+        home=args.home,
+        prefix=args.prefix,
+        wine_tree=args.tree,
+        user=args.user,
+    )
     print(doctor_mod.as_json(report) if args.json else doctor_mod.render(report))
     return report.exit_code
 
@@ -1072,9 +1078,21 @@ def build_parser() -> argparse.ArgumentParser:
         prog="wpt",
         description="Install and repair Windows audio plugins in an ableton-linux Wine prefix.",
     )
-    parser.add_argument("--home", help="override $HOME")
+    parser.add_argument(
+        "--home",
+        help=(
+            "home for Wine-tree/product discovery and doctor rescue-store check "
+            "(default: $HOME; does not change the Wine prefix)"
+        ),
+    )
     parser.add_argument("--prefix", help="Wine prefix (default $WINEPREFIX or ~/.wine-ableton)")
-    parser.add_argument("--tree", help="Wine tree (default: newest ~/.local/opt/wine-d2d1-nspa-*)")
+    parser.add_argument(
+        "--tree",
+        help=(
+            "Wine tree (default: newest matching tree under --home/.local/opt; "
+            "--home defaults to $HOME)"
+        ),
+    )
     parser.add_argument("--user", help="Windows user inside the prefix (default: auto-detect)")
     parser.add_argument("--version", action="version", version=f"wpt {__version__}")
 

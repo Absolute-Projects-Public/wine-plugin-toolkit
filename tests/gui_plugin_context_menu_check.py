@@ -1,12 +1,15 @@
 """Right-click actions for installed plugins and custom-Wine standalone launch.
 
-Run on the PC with PySide6: QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py
+Run with PySide6: QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py
 """
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -112,10 +115,12 @@ def main() -> int:
         check("menu tooltips are enabled", menu.toolTipsVisible(), True)
         check("licensing risk is disclosed in the tooltip",
               "licensing service" in run.toolTip().lower() if run else False, True)
-        check("process-group tracking is disclosed",
-              "process group" in run.toolTip().lower() if run else False, True)
-        check("detached helper-process limitation is disclosed",
-              "may outlive it" in run.toolTip().lower() if run else False, True)
+        check("tracked launch groups are disclosed",
+              "tracks launched groups" in run.toolTip().lower() if run else False, True)
+        check("separate WPT windows are disclosed as uncoordinated",
+              "will not rediscover them" in run.toolTip().lower() if run else False, True)
+        check("helper and licensing-service caution is disclosed",
+              "helpers or licensing services" in run.toolTip().lower() if run else False, True)
         print("2. The menu action delegates to the selected custom Wine target")
         launch = make_launch(root)
         with patch.object(gui_mod.standalone_mod, "launch_standalone", return_value=launch) as start:
@@ -190,7 +195,7 @@ def main() -> int:
         window.env = env
         window.inv = Inventory(entries=[selected, app_entry])
 
-        print("5. A live launcher blocks second launches and prefix writes, but allows preview")
+        print("5. A live standalone permits another launch, while prefix writes remain blocked")
         with patch.object(window, "_jobs_running", return_value=True), \
              patch.object(gui_mod.standalone_mod, "launch_standalone") as start:
             window._launch_standalone(selected)
@@ -227,15 +232,27 @@ def main() -> int:
         check("poll error keeps launch busy", remaining, [poll_error])
         check("failed poll does not probe a process group", no_group_probe.called, False)
 
+        first_live_launch = StandaloneLaunch(
+            process=FakeProcess(pid=780, returncode=None), log_path=root / "running.log", size_matches=False
+        )
         window._standalone_launches = [
-            StandaloneLaunch(process=FakeProcess(returncode=None), log_path=root / "running.log", size_matches=False)
+            first_live_launch
         ]
         busy_menu = window._build_plugin_menu(selected)
         busy_run = find_action(busy_menu, "Run in Standalone")
-        check("active standalone disables a second launch", busy_run.isEnabled() if busy_run else None, False)
-        with patch.object(gui_mod.standalone_mod, "launch_standalone") as second_start:
+        check("active standalone leaves a second launch enabled", busy_run.isEnabled() if busy_run else None, True)
+        second_live_launch = StandaloneLaunch(
+            process=FakeProcess(pid=781, returncode=None), log_path=root / "second-running.log", size_matches=False
+        )
+        with patch.object(
+            gui_mod.standalone_mod, "launch_standalone", return_value=second_live_launch
+        ) as second_start:
             window._launch_standalone(selected)
-        check("active standalone blocks a second launch", second_start.called, False)
+        check("active standalone permits a second launch", second_start.called, True)
+        check("second launch keeps the window's selected environment",
+              second_start.call_args.args[0] is env, True)
+        check("both concurrent standalone groups remain tracked",
+              window._standalone_launches, [first_live_launch, second_live_launch])
         dispose_menu(app, busy_menu)
         window.plugin_table.setRowCount(1)
         window.plugin_table.selectRow(0)
@@ -393,11 +410,18 @@ def main() -> int:
         check("dismissal is not explicit consent to close", keep_if_dismissed, True)
         check("keep-open is the default button", close_box.default, "Keep WPT open")
         check("Escape is explicitly assigned to keep-open", close_box.escape, "Keep WPT open")
-        check("close warning discloses detached helpers", "Detached helpers" in close_box.text, True)
+        check("close button makes the leave-running behavior explicit",
+              close_box.buttons[1], "Close WPT; don't stop apps")
+        check("close warning says WPT does not signal launched standalone",
+              "does not signal" in close_box.text.lower(), True)
+        check("close warning preserves the prefix-write caution",
+              "prefix-write protection ends" in close_box.text.lower(), True)
+        check("close warning discloses that a reopened WPT will not track apps",
+              "does not rediscover them" in close_box.text.lower(), True)
         FakeCloseBox.choose_close = True
         with patch.object(gui_mod, "QMessageBox", FakeCloseBox):
             explicit_close = window._ask_keep_open_for_standalone(window._standalone_launches)
-        check("only the explicit Close anyway button permits close", explicit_close, False)
+        check("only the explicit leave-app-running button permits close", explicit_close, False)
         FakeCloseBox.choose_close = False
 
         close_event = QCloseEvent()
@@ -415,7 +439,8 @@ def main() -> int:
              patch.object(window, "_finishing_dialog") as finishing_dialog:
             window.closeEvent(first_event)
             window.closeEvent(second_event)
-        check("first Close anyway waits for active read-only job", first_event.isAccepted(), False)
+        check("explicit leave-apps-running choice waits for active read-only job",
+              first_event.isAccepted(), False)
         check("closing state survives the wait", window._closing, True)
         check("job completion accepts close without re-prompt", second_event.isAccepted(), True)
         check("standalone close prompt appeared only once", close_anyway.call_count, 1)
@@ -430,6 +455,77 @@ def main() -> int:
             window._launch_update_install(root / "update.pkg")
         check("active standalone blocks update/restart", update_launch.called, False)
         check("blocked update explains why", update_warning.called, True)
+
+        print("12. Closing WPT leaves concurrently launched detached apps alive")
+        fake_wine = env.wine_binary
+        fake_wine.write_text("#!/bin/sh\nexec /bin/sleep 30\n")
+        fake_wine.chmod(0o755)
+        real_launches = []
+        close_window = None
+        try:
+            with patch.dict(os.environ, {"XDG_CACHE_HOME": str(root / "cache")}):
+                for _ in range(2):
+                    real_launches.append(gui_mod.standalone_mod.launch_standalone(env, exe))
+            with patch.object(MainWindow, "refresh_env", lambda self: None):
+                close_window = MainWindow()
+            close_window.env = env
+            close_window._standalone_launches = real_launches.copy()
+            check("each detached app receives its own process group",
+                  [os.getpgid(item.pid) == item.pid for item in real_launches], [True, True])
+            signal_calls = []
+            real_killpg = os.killpg
+
+            def record_process_signal(pgid, sig):
+                if sig != 0:
+                    signal_calls.append((pgid, sig))
+                return real_killpg(pgid, sig)
+
+            with patch.object(os, "killpg", side_effect=record_process_signal):
+                with patch.object(close_window, "_ask_keep_open_for_standalone", return_value=False):
+                    accepted = close_window.close()
+            check("WPT accepts close while detached apps run", accepted, True)
+            check("WPT close sends no process-group signals", signal_calls, [])
+            alive_through_settle = [True] * len(real_launches)
+            deadline = time.monotonic() + 0.75
+            while time.monotonic() < deadline:
+                for index, item in enumerate(real_launches):
+                    if item.process.poll() is not None:
+                        alive_through_settle[index] = False
+                        continue
+                    try:
+                        os.killpg(item.pid, 0)
+                    except ProcessLookupError:
+                        alive_through_settle[index] = False
+                if not all(alive_through_settle):
+                    break
+                time.sleep(0.05)
+            check("both fake-Wine child process groups survive WPT close",
+                  alive_through_settle, [True, True])
+        finally:
+            for item in real_launches:
+                try:
+                    os.killpg(item.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            for item in real_launches:
+                try:
+                    item.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(item.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    item.process.wait(timeout=5)
+            survivors = []
+            for item in real_launches:
+                try:
+                    os.killpg(item.pid, 0)
+                except ProcessLookupError:
+                    continue
+                survivors.append(item.pid)
+            check("scratch process groups are cleaned up after the assertion", survivors, [])
+            if close_window is not None:
+                close_window._standalone_launches.clear()
 
         window._standalone_launches = []
         window.close()

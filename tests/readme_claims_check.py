@@ -133,14 +133,27 @@ def old_promises(text: str) -> list[str]:
 
 def ledger_gaps(ledger: str) -> list[str]:
     gaps = []
+    seen = set()
     for line in ledger.splitlines():
-        if not re.match(r"^\| C\d\d \|", line):
-            continue
-        fields = line.split("|")
-        if len(fields) < 5:
+        if re.match(r"^\|{2,} C\d\d \|", line):
             gaps.append("malformed row")
-        elif "VERIFIED" in fields[4].upper() and not all(x in fields[3] for x in ("COMMAND:", "OUTPUT:")):
-            gaps.append(fields[1].strip())
+            continue
+        match = re.match(r"^\| (C\d\d) \|", line)
+        if not match:
+            continue
+        claim_id = match.group(1)
+        if claim_id in seen:
+            gaps.append(f"duplicate {claim_id}")
+        seen.add(claim_id)
+        if not line.endswith("|") or line.endswith("||"):
+            gaps.append("malformed row")
+        cells = [cell.strip() for cell in line[1:-1].split("|")]
+        if len(cells) != 4:
+            gaps.append("malformed row")
+        elif "VERIFIED" in cells[3].upper() and not all(
+            marker in cells[2] for marker in ("COMMAND:", "OUTPUT:")
+        ):
+            gaps.append(cells[0])
     return gaps
 
 
@@ -170,12 +183,102 @@ def validate_examples(readme: str, parser: argparse.ArgumentParser, commands: di
 def run() -> None:
     readme = README.read_text()
     ledger = CLAIMS.read_text()
+    testing = (ROOT / "TESTING.md").read_text(encoding="utf-8")
     parser = build_parser()
     commands = _subparsers(parser)
     examples_count = validate_examples(readme, parser, commands)
     check(True, f"all {examples_count} fenced and inline CLI examples parse (syntax only)")
     check(tuple(tabs_from_ast(GUI)) == EXPECTED_TABS, "six literal GUI tabs in documented order")
     check("Six tabs" in readme, "README describes six tabs")
+    contents = section(readme, "Contents")
+    toc_links = set(re.findall(r"\[[^]]+\]\(#([^)]+)\)", contents))
+    required_toc = {"what-it-does", "requirements", "install", "command-line", "gui",
+                    "how-it-verifies", "scope-and-limitations", "development", "credits"}
+    check(required_toc <= toc_links, "README contents menu links to the main sections")
+    requirements = section(readme, "Requirements")
+    check("shibco/ableton-linux" in requirements and "wine-d2d1-nspa-<version>" in requirements
+          and "does not bundle" in requirements and "Run in Standalone" in requirements
+          and "registered uninstall" in requirements and "--purge" in requirements
+          and "python3 --version" in requirements,
+          "README explains the required external Wine tree, Python minimum and Wine-backed operations")
+    check((ROOT / "tests" / "doctor_override_check.py").is_file()
+          and 'wpt --prefix "$HOME/.wine-ableton" --tree "$HOME/.local/opt/wine-d2d1-nspa-11.13" doctor' in readme
+          and "Replace `11.13` with your installed tree version" in readme,
+          "README doctor override example has a dedicated CLI regression test")
+    check("sudo apt install python3 python3-venv msitools" in readme,
+          "README Debian/Ubuntu dependency command installs Python, venv and msitools")
+    check(". .venv/bin/activate" in readme,
+          "README explains how to activate source-install console scripts")
+    check("sudo apt install python3 python3-venv msitools" in testing
+          and "python3 --version" in testing and ". .venv/bin/activate" in testing,
+          "TESTING states the minimum Python version, apt dependencies and venv activation")
+    pkgbuild = (ROOT / "PKGBUILD").read_text(encoding="utf-8")
+    pkgver_match = re.search(r"^pkgver=(.+)$", pkgbuild, re.MULTILINE)
+    pkgrel_match = re.search(r"^pkgrel=(.+)$", pkgbuild, re.MULTILINE)
+    check(pkgver_match is not None and pkgrel_match is not None
+          and f"VERSION={pkgver_match.group(1)}" in readme
+          and f"PKGREL={pkgrel_match.group(1)}" in readme,
+          "README install examples match PKGBUILD version and pkgrel")
+    check('SOURCE_TARBALL="wpt-${VERSION}.tar.gz"' in readme and
+          'sha256sum -c "${SOURCE_TARBALL}.sha256"' in readme and
+          'SRCDEST="$HOME/Downloads" makepkg -si' in readme,
+          "README builds from the exact source archive it verifies")
+    check('tar xzf "$SOURCE_TARBALL"' in readme
+          and 'cd "wine-plugin-toolkit-${VERSION}"' in readme
+          and ".venv/bin/python -m pip install '.[gui]'" in readme,
+          "README verifies, extracts and installs the cross-distro source archive")
+    check("Global flags must come before the subcommand" in readme
+          and "`--home` is a discovery override, not a general `HOME` override" in readme
+          and "home used for Wine-tree/product discovery and the rescue-store" in readme
+          and "does not change the Wine prefix" in readme
+          and "or redirect the" in readme
+          and "preset store used by" in readme
+          and "`presets` and uninstall" in readme
+          and "`doctor` may inspect a different rescue store from the one uninstall writes to" in readme
+          and "`--home` is a discovery override, not a general `HOME` override" in testing
+          and "standalone-log fallback" not in readme
+          and "standalone-log fallback" not in testing,
+          "README and TESTING distinguish global options and --home scope")
+    help_text = " ".join(build_parser().format_help().split())
+    check("home for Wine-tree/product discovery and doctor rescue-store check" in help_text
+          and "does not change the Wine prefix" in help_text
+          and "newest matching tree under --home/.local/opt" in help_text
+          and "--home defaults to $HOME" in help_text,
+          "CLI help explains --home and --tree scope consistently with the README")
+    exit_codes_text = " ".join(readme.split())
+    exit_code_claims = (
+        "`1` verification, scan or system error",
+        "`2` bad input",
+        "`3` environment not found",
+        "`4` msitools error, external-tool timeout or uninstall preflight read/safety failure",
+        "`5` catalogue error",
+        "`130` interrupted",
+        "For uninstall, `1` includes rescue, msiexec (including timeout), post-msiexec verification, file removal or registry purge failures; unexpected system errors also return `1`",
+        "Missing MSI or ProductCode input is `2`",
+        "`4` covers an MSI/plan preflight read failure or safety refusal",
+        "`wpt doctor` uses `0/1/2`",
+    )
+    check(all(claim in exit_codes_text for claim in exit_code_claims),
+          "README lists all documented CLI exit codes")
+    check("runner isolates `TMPDIR`, but other suites inherit `HOME`" in testing
+          and "never use a live prefix" in testing,
+          "TESTING warns that non-updater suites inherit the caller's environment")
+    check('PACKAGE="wine-plugin-toolkit-${VERSION}-${PKGREL}-any.pkg.tar.zst"' in readme
+          and 'sudo pacman -U "$PACKAGE"' in readme
+          and "wine-plugin-toolkit-*.pkg.tar.zst" not in readme
+          and "wpt-*.tar.gz" not in readme,
+          "README install commands select one exact release asset")
+    public_docs = [README, ROOT / "CHANGELOG.md", ROOT / "TESTING.md", ROOT / "CONTRIBUTING.md",
+                   ROOT / "docs" / "CLAIMS.md", ROOT / "docs" / "DESIGN.md",
+                   ROOT / "docs" / "REVIEW-BRIEF.md"]
+    check(all("—" not in path.read_text(encoding="utf-8") for path in public_docs),
+          "shipped documentation contains no em dashes")
+    check("Python 3.11 or newer" in testing and "3.14 works" not in testing
+          and "shibco/ableton-linux" in testing and "bin/wine" in testing
+          and "python3 -m venv .venv" in testing,
+          "TESTING prerequisites and install commands match README")
+    check('--assets "${WPT_ARCHIVE_DIR:-$HOME/wpt-pkg}"' in testing,
+          "TESTING scans the actual release asset directory")
     check(bool(FAMILIES) and FAMILIES[0].name == "Advanced Installer (LZMA)" and FAMILIES[0].needs_wine,
           "Advanced Installer is first and Wine-only")
     check(all(not f.needs_wine for f in FAMILIES[1:]), "other declared wrapper families attempt Linux path")
@@ -189,9 +292,20 @@ def run() -> None:
     failure = Report(); failure.add("fixture", FAIL)
     check((clean.exit_code, warning.exit_code, failure.exit_code) == (0, 1, 2),
           "doctor clean/warn/fail exit codes 0/1/2")
-    for name in ("C01", "C02", "C03", "C04", "C05", "C06", "C07", "C08", "C09", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17"):
+    for number in range(1, 20):
+        name = f"C{number:02d}"
         check(re.search(rf"^\| {name} \|", ledger, re.M) is not None, f"ledger contains {name}")
-    check(not ledger_gaps(ledger), "no VERIFIED ledger row without command/output fields")
+    check(not ledger_gaps(ledger), "no malformed claim rows or VERIFIED rows without command/output fields")
+    c18_row = next(line for line in ledger.splitlines() if line.startswith("| C18 |"))
+    mutations = (
+        (ledger.replace(c18_row, "|" + c18_row), "extra leading pipe"),
+        (ledger.replace(c18_row, c18_row[:-1]), "missing trailing pipe"),
+        (ledger.replace(c18_row, c18_row + "|"), "doubled trailing pipe"),
+        (ledger + "\n" + c18_row, "duplicate claim ID"),
+        (ledger.replace(c18_row, c18_row.replace(" | ", " | unexpected | ", 1)), "extra cell"),
+    )
+    for mutated, description in mutations:
+        check(bool(ledger_gaps(mutated)), f"ledger rejects {description}")
     check(not missing_limits(readme), "README keeps warnings in their relevant sections")
     surfaces = {"README": readme, "TESTING": (ROOT / "TESTING.md").read_text()}
     for name in ("cli", "gui", "installer"):

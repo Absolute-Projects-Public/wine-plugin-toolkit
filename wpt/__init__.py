@@ -6,7 +6,7 @@ result against the MSI's own File table. Also scans a prefix for installs that
 registered but never copied their files.
 """
 
-__version__ = "0.6.4"
+__version__ = "0.6.5"
 
 from .environment import Environment, EnvironmentError_, detect, find_wine_trees  # noqa: F401
 from .installer import (  # noqa: F401

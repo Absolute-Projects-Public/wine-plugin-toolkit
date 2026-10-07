@@ -1,6 +1,6 @@
-# Design and review map — `wpt`
+# Design and review map: `wpt`
 
-**Scope:** unpublished work after 0.6.4. This is a code/evidence map, not a certification of every README claim. Preserve command, exit, fixture, source revision and remaining limits for each release claim.
+**Scope:** 0.6.5 changes relative to v0.6.4. This is a code/evidence map, not a certification of every README claim. Preserve command, exit, fixture, source revision and remaining limits for each release claim.
 
 ## Current data flow
 
@@ -13,9 +13,9 @@
 7. Preset rescue runs before Wine and strictly traverses planned no-clobber paths plus recognized Roaming/MIDI XML paths; scan/stat errors propagate and symlink directories are not followed. Every enumerated no-clobber file needs a successful rescue row or the job stops. Roaming/MIDI lookup is limited to inferred product-name paths; uninspected RemoveFile/custom actions mean discovery cannot prove a complete backup. Keep an independent backup because Wine can delete user files or affect host-mapped paths.
 8. Payload-backed direct removal compares eligible files against staged MSI bytes and declared size. It preserves modified, no-clobber, shared, and component-state-uncertain files as leftovers; table-only plans cannot prove bytes and fail closed. Unowned nested files remain, and only empty parents are pruned. Existing prefix paths are checked without following symlinks before uninstall; destination writes use no-follow directory handles and refuse case-variant conflicts. This is not a guarantee against a concurrent path-swap race. `--files-only` is CLI-only. Registry purge is separately gated on successful vendor uninstall, confirmed registration removal and no remaining mapped MSI files; a matching basename or product name alone is not proof.
 
-## Evidence on this branch (not a release gate)
+## Evidence boundaries for v0.6.5
 
-- Red/green disposable fixtures include `tests/msi_table_header_check.py`, `tests/msi_manifest_check.py`, `tests/file_plan_check.py`, `tests/plan_root_safety_check.py`, `tests/casefold_manifest_check.py`, `tests/casefold_ancestor_check.py`, `tests/casefold_prune_check.py`, `tests/component_ownership_check.py`, `tests/cross_product_ownership_check.py`, `tests/inventory_manifest_check.py`, `tests/registry_manifest_check.py`, `tests/same_size_modified_check.py`, `tests/table_only_fail_closed_check.py`, `tests/uninstall_safety_check.py`, `tests/purge_leftovers_gate_check.py`, `tests/uninstall_oserror_check.py`, `tests/apply_plan_symlink_check.py`, `tests/preset_rescue_check.py`, `tests/preset_collision_check.py` and `tests/gui_refresh_repro.py`. GUI fixtures require PySide6 on the PC.
+- Red/green disposable fixtures include `tests/msi_table_header_check.py`, `tests/msi_manifest_check.py`, `tests/file_plan_check.py`, `tests/plan_root_safety_check.py`, `tests/casefold_manifest_check.py`, `tests/casefold_ancestor_check.py`, `tests/casefold_prune_check.py`, `tests/component_ownership_check.py`, `tests/cross_product_ownership_check.py`, `tests/inventory_manifest_check.py`, `tests/registry_manifest_check.py`, `tests/same_size_modified_check.py`, `tests/table_only_fail_closed_check.py`, `tests/uninstall_safety_check.py`, `tests/purge_leftovers_gate_check.py`, `tests/uninstall_oserror_check.py`, `tests/apply_plan_symlink_check.py`, `tests/preset_rescue_check.py`, `tests/preset_collision_check.py` and `tests/gui_refresh_repro.py`. GUI fixtures require PySide6.
 - Metadata/listing comparisons do not establish real cabinet extraction, install, repair, uninstall, vendor custom-action, or feature-selection behavior. Keep machine-specific reports in private maintainer records.
 - Synthetic destination-root fixtures cover selected unsafe mappings; they do not prove every vendor MSI folder mapping.
 
@@ -32,3 +32,4 @@
 - Evidence beats prose: a synthetic test is not a real-vendor or published-artefact result.
 - Fail closed on ambiguous destinations and modified-size files. Preserve unowned data over complete removal.
 - Separate toolkit file deletion, preset rescue, Wine/vendor effects, scratch cleanup and updater effects in every safety claim.
+- Standalone apps start in separate process sessions. Within one WPT window, concurrent launches use that window's active profile; its tracked groups block prefix writes, profile switches and update restarts while active. Closing or reopening that window drops/does not restore tracking, and separate WPT windows are not coordinated.

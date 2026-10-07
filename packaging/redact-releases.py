@@ -5,7 +5,7 @@ A release *body* is published prose that no scrub reaches: `.gitignore` filters 
 typed into a release description, and they stay public for every past version. This replaces them
 with a single honest line, leaving each release listed and every asset untouched.
 
-    python3 packaging/redact-releases.py [--repo owner/name] [--keep v0.6.4] [--dry-run]
+    python3 packaging/redact-releases.py [--repo owner/name] [--keep v0.6.5] [--dry-run]
 
 Needs `gh`, authenticated for the repository.
 """

@@ -13,28 +13,51 @@ prefix for tests. A dry-run flag is not by itself proof that an external vendor 
 
 ## What you need
 
-- Linux, Python 3.11+ (3.14 works)
-- `msitools`, `sudo pacman -S msitools` (Arch/CachyOS) · `sudo apt install msitools` (Debian/Ubuntu)
-- A Wine prefix of the ableton-linux shape: `~/.wine-ableton` plus a staged
-  `~/.local/opt/wine-d2d1-nspa-<version>` tree. Point it elsewhere with `--prefix` / `--tree`.
-- `pyside6` only if you want the GUI (`sudo pacman -S pyside6`)
+- Linux on x86-64 and Python 3.11 or newer. On Debian/Ubuntu, check `python3 --version` because the
+  distro default may be older.
+- `msitools`: Arch/CachyOS: `sudo pacman -S msitools`.
+  Debian/Ubuntu: `sudo apt install python3 python3-venv msitools`.
+- A prepared Wine prefix with `drive_c` (default `~/.wine-ableton`) and a staged
+  `~/.local/opt/wine-d2d1-nspa-<version>/bin/wine` tree. The [ableton-linux project](https://github.com/shibco/ableton-linux)
+  documents the expected setup. Set `WINEPREFIX` for a non-default prefix. Global `--home`,
+  `--prefix`, `--tree` and `--user` options must appear before the subcommand.
+  `--home` is a discovery override, not a general `HOME` override; it changes the home used for
+  Wine-tree/product discovery and `doctor`'s rescue-store check. It does not change the Wine prefix
+  or relocate the preset store used by `presets` and uninstall, update cache/config, or Downloads
+  search; those use the current `$HOME`/XDG locations. When `--home` differs from `$HOME`, `doctor`
+  may inspect a different rescue store from the one uninstall writes.
+- Optional GUI: `sudo pacman -S pyside6` (Arch/CachyOS), or install the `.[gui]` extra in the source
+  install steps below.
 
 ## Install
 
 Arch/CachyOS:
 
 ```bash
-sudo pacman -U wine-plugin-toolkit-*-1-any.pkg.tar.zst
+VERSION=0.6.5
+PKGREL=1
+PACKAGE="wine-plugin-toolkit-${VERSION}-${PKGREL}-any.pkg.tar.zst"
+cd ~/Downloads
+sha256sum -c "${PACKAGE}.sha256"
+sudo pacman -U "$PACKAGE"
 wpt --version
 ```
 
 Anything else, from the source tarball:
 
 ```bash
-tar xzf wpt-*.tar.gz && cd wine-plugin-toolkit-*
-pip install .              # console script `wpt`
-pip install '.[gui]'       # adds `wpt-gui`
+VERSION=0.6.5
+SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+cd ~/Downloads
+sha256sum -c "${SOURCE_TARBALL}.sha256"
+tar xzf "$SOURCE_TARBALL"
+cd "wine-plugin-toolkit-${VERSION}"
+python3 -m venv .venv
+.venv/bin/python -m pip install '.[gui]'  # drop [gui] for the CLI-only install
+. .venv/bin/activate
 ```
+
+If you open another terminal, activate the venv again before using the bare `wpt` commands below.
 
 ## The five-minute smoke test
 
@@ -209,7 +232,9 @@ python3 tests/test_core.py                              # pure logic, no prefix 
 python3 tests/test_prefix_integration.py                # builds a synthetic prefix, exercises everything
 python3 tests/readme_claims_check.py                    # mechanical README claims, not an MSI proof
 python3 tests/scanner_check.py                          # filenames with spaces / missing assets fail closed
-python3 tests/tarball_source_check.py                   # reproducible archive / dirty, version, pin and tag guards
+python3 tests/tarball_source_check.py                   # archive reproducibility, dirty/version/pin/tag and local-build guards
+python3 tests/run_suites_asset_override_check.py        # asset defaults, relative paths, missing-asset skip/required gate
+python3 tests/updater_e2e_asset_isolation_check.py      # updater synthetic assets stay out of the external archive
 python3 tests/version_consistency_check.py              # runtime, project, package and changelog versions agree
 python3 tests/package_data_check.py                     # wheel configuration includes catalogue and icons
 QT_QPA_PLATFORM=offscreen python3 tests/gui_smoke.py    # every tab, fixture-backed catalogue refresh, clean close
@@ -221,7 +246,8 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_job_failure_check.py # a job that di
 QT_QPA_PLATFORM=offscreen python3 tests/gui_refresh_repro.py     # overlapping refresh is declined without losing the first
 QT_QPA_PLATFORM=offscreen python3 tests/gui_startup_close_check.py # delayed catalogue callback must not run after close
 python3 tests/standalone_launch_check.py                          # unique match, prefix containment, custom Wine env; Popen mocked
-QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py # menu labels/availability; launch is mocked
+QT_QPA_PLATFORM=offscreen python3 tests/gui_plugin_context_menu_check.py # GUI menu, concurrent launch, close and prefix-write guards; synthetic runner only
+python3 tests/standalone_process_detach_check.py                        # fake Wine child survives launcher interpreter exit; scratch only
 python3 tests/launch_profiles_check.py                             # profile schema, private/concurrent persistence, literal env parsing; temp home/prefix
 QT_QPA_PLATFORM=offscreen python3 tests/gui_launch_profiles_check.py # profile switching, stale-view invalidation, modal race, rename, standalone propagation; temp home/prefix
 python3 tests/preset_rescue_check.py                            # the preset rescue, and the removal/staging edge cases
@@ -242,7 +268,7 @@ python3 tests/casefold_manifest_check.py                        # case variant a
 python3 tests/inventory_manifest_check.py                       # same basename in two MSIs has separate owner/size
 python3 tests/registry_manifest_check.py                        # purge cannot take an unowned user's registry pointer
 python3 tests/wrapper_display_check.py                          # a wrapper whose window could not appear is refused, not launched
-WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py # the updater against built release artefacts
+WPT_RELEASE_DIR=~/wpt-release WPT_RELEASE_ASSET_DIR=~/wpt-pkg python3 tests/updater_e2e_check.py # updater against built assets
 ```
 
 Three of the checks that matter most now ship with the project instead of living in an agent's
@@ -250,21 +276,34 @@ workspace, because a reviewer should be able to run them too:
 
 ```bash
 bash packaging/run-suites.sh .             # every suite, each with the environment it documents
-python3 packaging/scan-identifiers.py . --assets ./dist # tracked repo + local tarballs + release bodies
+python3 packaging/scan-identifiers.py . --assets "${WPT_ARCHIVE_DIR:-$HOME/wpt-pkg}" # tracked repo + source tarballs + release bodies
 python3 packaging/redact-releases.py --dry-run   # redact the notes of releases older than the current one
 ```
 
 `scan-identifiers.py` marks tarballs **SKIPPED** unless `--assets` points at a directory with at least
 one source tarball; it fails closed on unreadable or oversized members. A clean result is only for
-the surfaces actually scanned, and the current 0.6.4 release body contains an allowed quoted error
+the surfaces actually scanned, and the published v0.6.4 release body contains an allowed quoted error
 that still appears as a finding for review.
 
-`run-suites.sh` exists because handing every suite the same environment produces a false failure:
-`updater_e2e_check` drives the real CLI, so it must run with `WPT_NO_UPDATE_CHECK` **unset**, and it
-is skipped rather than failed when there is no built release to test against. `scan-identifiers.py`
-checks three places, only one of which a `.gitignore` covers — the tracked files, tarballs supplied
-through `--assets`, and GitHub release *bodies* fetched from the API, which are published prose that
-no scrub reaches.
+`run-suites.sh` gives `updater_e2e_check` a separate environment because it drives the real CLI and
+must run with `WPT_NO_UPDATE_CHECK` **unset**. It uses `WPT_RELEASE_DIR` for the extracted source tree
+and `WPT_RELEASE_ASSET_DIR` for the built assets (default: `$WPT_RELEASE_DIR/dist`). The runner reads
+`pkgver` and `pkgrel` from that tree's `PKGBUILD`, requires the four matching source/package assets
+and their `.sha256` sidecars, and verifies both asset hashes before running the updater test. Missing
+or stale assets are counted as a skip by default, even if an old `dist/` directory exists; invalid
+sidecars always fail. Set `WPT_REQUIRE_UPDATER_E2E=1` to make an incomplete asset set fail. Relative
+`WPT_RELEASE_DIR`, `WPT_RELEASE_ASSET_DIR`, and `TMPDIR` values are resolved from the caller's working
+directory before the runner changes into the tested tree. Every run gets a private unique log directory
+under the caller's TMPDIR base and a separate scratch directory that is removed on exit. The runner prints
+the log path so parallel runs cannot overwrite each other's logs. For source-only runs, the default skip
+is explicitly counted.
+
+The runner isolates `TMPDIR`, but other suites inherit `HOME`, XDG paths and `WINEPREFIX` from the
+caller. Set those to a disposable test home and prefix for full-suite runs; never use a live prefix.
+
+`scan-identifiers.py` checks three places: tracked files, tarballs supplied through `--assets`, and
+GitHub release *bodies* fetched from the API. Release bodies are published prose that a `.gitignore`
+does not cover.
 
 `tests/gui_job_failure_check.py` covers the other half of the same plumbing: a job that *fails*. It
 pins the six defects a review reproduced on 2026-09-27 - an uninstall pre-check whose worker raised
@@ -284,23 +323,28 @@ background work is retained; the job closures also capture that environment befo
 `tests/standalone_launch_check.py` verifies exact/near-miss names, case-only ambiguity, disabled and
 non-plugin entries, outside-prefix and symlinked leaf/ancestor paths, `..` refusal, MSI-owner mismatch,
 fail-closed launch-size changes, custom-Wine environment sanitization, absolute and fallback XDG log
-placement, failed-Popen log cleanup, missing runtime, output capture and asynchronous reaping. Process
+placement, failed-Popen log cleanup, missing runtime, output capture and asynchronous reaping. Its process
 creation is mocked. `tests/gui_plugin_context_menu_check.py` drives an offscreen PySide window and checks
-visible labels/warnings, second-launch blocking, process-group success/error paths, Escape-safe and
-re-entrant close handling, update-restart blocking, prefix-write guards on install, repair, uninstall,
-enable/disable and pending wrappers, allowed dry-run preview, launch errors, mocked Browse routing, and
-disposal of both context menus. Neither test starts a vendor application or reaches iLok.
+visible labels/warnings, multiple concurrent launch tracking, process-group success/error paths, close
+prompt behavior, update-restart blocking, prefix-write guards on install, repair, uninstall, enable/disable
+and pending wrappers, allowed dry-run preview, launch errors, mocked Browse routing, and disposal of both
+context menus. It starts two scratch-only process groups using a temporary fake Wine launcher that
+executes `/bin/sleep`, closes a synthetic WPT window, verifies both child processes remain alive, then
+terminates only those exact test process groups. `tests/standalone_process_detach_check.py` starts a fake-Wine
+child from a helper Python interpreter, waits for that interpreter to exit, confirms the child still has its
+own session/process group and remains alive, then terminates only that exact group. Both tests confine launch
+logs to scratch XDG caches. No vendor app, real Wine runtime, real prefix, or iLok is used.
 
-For a **live desktop smoke test**, stage the review tree under an isolated PC scratch directory and use a
-separate HOME/XDG set plus a disposable `WINEPREFIX` containing only inert fixtures. Verify the Environment
-tab resolves the scratch paths, use Plugins → Refresh inventory, close the window normally, then verify the
-exact PID exited and no `python3 -m wpt.gui` process remains. This checks render/refresh/close plumbing only;
-it is not proof of MSI ownership or real-prefix safety. Do not run `wpt-gui-on-desktop.sh` unchanged for this
-test: it kills an existing `python3 -m wpt.gui` process and launches the installed `~/wpt-test` tree.
+For a **live desktop smoke test**, stage the review tree under an isolated scratch directory on the test
+machine and use a separate HOME/XDG set plus a disposable `WINEPREFIX` containing only inert fixtures.
+Verify the Environment tab resolves the scratch paths, use Plugins → Refresh inventory, close the window
+normally, then verify the exact PID exited and no `python3 -m wpt.gui` process remains. This checks
+render/refresh/close plumbing only; it is not proof of MSI ownership or real-prefix safety. Do not use a
+launcher that kills existing WPT processes or points at an installed tree for this test.
 
-For remote Wayland tests that open URLs or folders, set a short private `TMPDIR` and explicitly set
+For remote graphical tests that open URLs or folders, set a short private `TMPDIR` and explicitly set
 `XDG_SESSION_TYPE=wayland`. A deeply nested scratch `TMPDIR` can make Chromium's Unix-domain socket path
-too long, while an SSH-provided `tty` session type can prevent Nautilus from connecting.
+too long, while an incorrect session type may prevent the desktop opener from connecting.
 
 Do not probe the GUI entry point with `python3 -m wpt.gui --help` piped to `head`: the GUI event loop does
 not exit as a help command, so the pipeline can strand a detached Qt process. Use `python3 -c 'import wpt.gui'`
@@ -313,17 +357,28 @@ its revision, command, exit status, skip reasons, and local log location; do not
 suite count.
 
 `tests/updater_e2e_check.py` is the release gate for `wpt update`: it stands a GitHub-API-shaped
-stub on localhost, serves the four assets from `dist/`, and then runs the real updater code -
-`latest_release`, the version comparison, asset selection, the download, the zstd check and the
-per-asset checksum - plus `wpt update --install show` exactly as a user on the previous release
-would run it. It needs a built release (`WPT_RELEASE_DIR=~/wpt-release`) and exits 2 rather than
-failing when the artefacts are not there yet.
+stub on localhost, serves four assets from `WPT_RELEASE_ASSET_DIR` (default: `WPT_RELEASE_DIR/dist`),
+and runs the real updater code - `latest_release`, the version comparison, asset selection, the
+download, the zstd check and the per-asset checksum - plus `wpt update --install show` exactly as a
+user on the previous release would run it. It needs the extracted source tree in `WPT_RELEASE_DIR`
+and built assets in `WPT_RELEASE_ASSET_DIR`. Its final CLI checks require an Arch-family host because
+they verify the displayed `sudo pacman -U` command; run the release gate on an Arch-family machine.
+With `packaging/build-local.sh` output in `~/wpt-pkg`, require the updater gate when running the extracted
+tree's suite:
+
+```bash
+export WPT_RELEASE_DIR=/path/to/extracted-candidate
+export WPT_RELEASE_ASSET_DIR=~/wpt-pkg
+export WPT_REQUIRE_UPDATER_E2E=1
+bash "$WPT_RELEASE_DIR/packaging/run-suites.sh" "$WPT_RELEASE_DIR"
+```
 
 `tests/gui_buttons_check.py` clicks every enabled button in every tab offscreen and fails on any exception.
 The install/uninstall/repair buttons are clicked too, with `apply_plan`, `uninstall_product` and
 `purge_registry` replaced by recording stubs, so the handlers run for real (that is where the wiring
-bugs live) while nothing can reach the prefix. Only buttons that open a modal dialog are skipped. 
-it exists because a `clicked` signal once handed a `checked` bool to a slot that took a release and crashed.
+bugs live) while nothing can reach the prefix. Only buttons that open a modal dialog are skipped.
+This check exists because a `clicked` signal once handed a `checked` bool to a slot that took a
+release and crashed.
 `tests/render_tabs.py` renders tabs to PNG so you can *look* at the layout instead of describing it.
 
 ```bash

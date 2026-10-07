@@ -761,18 +761,21 @@ class MainWindow(QMainWindow):
         os._exit(130)
 
     def _ask_keep_open_for_standalone(self, active_launches) -> bool:
-        """Return true unless the user explicitly selects Close anyway."""
+        """Return true unless the user explicitly selects the leave-apps-running close action."""
         pids = ", ".join(str(launch.pid) for launch in active_launches)
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Standalone still running")
         box.setText(
-            f"WPT still tracks Wine process group leader PID(s) {pids}. If you close WPT, "
-            "this window will stop blocking prefix changes. Detached helpers or licensing "
-            "services may still use the prefix."
+            f"WPT still tracks Wine process group leader PID(s) {pids}. Closing WPT does not signal "
+            "these standalone processes. Prefix-write protection ends when this window closes, and a "
+            "reopened or separate WPT window does not rediscover them. Do not use WPT to modify the "
+            "prefix until these apps and any detached helpers or licensing services have closed."
         )
         keep_open = box.addButton("Keep WPT open", QMessageBox.ButtonRole.AcceptRole)
-        close_anyway = box.addButton("Close anyway", QMessageBox.ButtonRole.DestructiveRole)
+        close_anyway = box.addButton(
+            "Close WPT; don't stop apps", QMessageBox.ButtonRole.DestructiveRole
+        )
         box.setDefaultButton(keep_open)
         box.setEscapeButton(keep_open)
         box.exec()
@@ -793,7 +796,7 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.plugin_log.appendPlainText(
-                "closing WPT while the standalone process group is active; prefix-write tracking ends"
+                "closing WPT while detached standalone app(s) remain active; prefix-write protection ends"
             )
         self._closing = True
         for timer_name in ("_startup_catalogue_timer", "_watch_timer"):
@@ -1356,15 +1359,6 @@ class MainWindow(QMainWindow):
         if resolution.executable is None:
             run.setEnabled(False)
             run.setToolTip(resolution.reason)
-        elif active_launches:
-            pids = ", ".join(str(launch.pid) for launch in active_launches)
-            run.setEnabled(False)
-            run.setToolTip(
-                f"A WPT-launched Wine process group is still active (leader PID {pids}). Close it "
-                "before launching another standalone. WPT tracks the launcher and surviving members "
-                "of its process group only while this window is open; detached helpers or licensing "
-                "services may outlive it."
-            )
         else:
             wine_binary = self.env.wine_binary if self.env is not None else "the selected Wine runtime"
             if resolution.verified:
@@ -1374,11 +1368,19 @@ class MainWindow(QMainWindow):
                 )
             else:
                 verification = "MSI ownership and file integrity are unverified."
+            active_note = ""
+            if active_launches:
+                pids = ", ".join(str(launch.pid) for launch in active_launches)
+                active_note = (
+                    f" {len(active_launches)} WPT-launched standalone group(s) are already active "
+                    f"(leader PID(s) {pids}); this launches another using this window's active profile."
+                )
             run.setToolTip(
-                f"Launch {resolution.executable.name} with {wine_binary}. {verification} "
-                "The app may contact its licensing service. While this window is open, WPT tracks "
-                "the launcher and surviving members of its process group. Detached helpers or "
-                "licensing services may outlive it; close those before changing the prefix."
+                f"Launch {resolution.executable.name} with {wine_binary}. {verification}{active_note} "
+                "The app starts in a separate process session; closing this WPT window does not signal it. "
+                "This window tracks launched groups and blocks prefix writes and profile changes while they "
+                "are active. A reopened or separate WPT window will not rediscover them. Close the app and "
+                "any helpers or licensing services before modifying the prefix."
             )
             run.triggered.connect(
                 lambda _checked=False, selected=entry: self._launch_standalone(selected)
@@ -1425,13 +1427,6 @@ class MainWindow(QMainWindow):
         if self._jobs_running():
             self.plugin_log.appendPlainText("could not start standalone: a prefix job is still running")
             return
-        active_launches = self._active_standalone_launches()
-        if active_launches:
-            pids = ", ".join(str(launch.pid) for launch in active_launches)
-            self.plugin_log.appendPlainText(
-                f"could not start standalone: WPT-launched Wine process(es) still active (PID {pids})"
-            )
-            return
         resolution = standalone_mod.resolve_standalone(plugin, self.inv, self.env)
         if resolution.executable is None:
             self.plugin_log.appendPlainText(f"could not start standalone: {resolution.reason}")
@@ -1444,13 +1439,15 @@ class MainWindow(QMainWindow):
             self.plugin_log.appendPlainText(f"could not start {resolution.executable.name}: {exc}")
             return
         self._standalone_launches.append(launch)
+        active_count = len(self._active_standalone_launches())
         if resolution.verified:
             ownership = "MSI ownership verified at last scan; file size matches at launch"
         else:
             ownership = "MSI ownership/integrity unverified"
         self.plugin_log.appendPlainText(
             f"started {resolution.executable.name} with {self.env.wine_binary} in this prefix "
-            f"(PID {launch.pid}; {ownership}); output: {launch.log_path}"
+            f"(detached PID {launch.pid}; {active_count} standalone group(s) tracked; {ownership}); "
+            f"output: {launch.log_path}"
         )
 
     def _selected_entry(self):

@@ -7,17 +7,33 @@
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![platform](https://img.shields.io/badge/platform-Arch%20%2F%20CachyOS-1793d1)](#install)
 
-Install Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's own installer
-refuses to run, then inspect the files it placed. File-table paths include duplicate basenames and
+Helps install supported Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's
+installer does not work under Wine, then inspect the files it placed. File-table paths include duplicate basenames and
 bundle internals, but size-based inventory/repair does not detect same-sized edits or establish full
 MSI component selection; see [verification limits](#how-it-verifies).
 
-**Status: 0.6.4. Early, and honest about it.** It is developed against one real stack (Neural DSP
-plugins on CachyOS, Ableton Live 12 via [shibco/ableton-linux](https://github.com/shibco/ableton-linux))
-and verified against real installers. Other vendors and other kinds of prefix are triaged read-only
-rather than promised. Bug reports are welcome: `wpt doctor` prints most of what is needed for one.
+**Version: 0.6.5.** This is an early tool developed against the
+ableton-linux Wine stack on CachyOS. Earlier releases were exercised against selected real Neural DSP
+installers; the 0.6.5 manifest/uninstall changes have synthetic-prefix coverage, not live-prefix
+validation. Other vendors and prefix types are triaged read-only rather than promised. Bug reports are
+welcome: `wpt doctor` prints most of what is needed for one.
 
 ![The Download tab, dark mode](docs/download-tab.png)
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Why this exists](#why-this-exists)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Coming from Windows](#coming-from-windows)
+- [Command line](#command-line)
+- [GUI](#gui)
+- [How it verifies](#how-it-verifies)
+- [Scope and limitations](#scope-and-limitations)
+- [Development](#development)
+- [Credits](#credits)
+- [AI Disclosure](#ai-disclosure)
 
 ## What it does
 
@@ -28,51 +44,63 @@ rather than promised. Bug reports are welcome: `wpt doctor` prints most of what 
   [verification limits](#how-it-verifies)).
 - **Attempts repair** of missing or wrong-sized File-table files from a cached MSI; preset
   no-clobber rules can leave a mismatch unresolved, and a same-size edit is not detectable.
-- **Uninstalls** read the MSI before removal and rescue regular files in no-clobber preset paths
-  before Wine's `msiexec /x`. A failed rescue stops the job. The toolkit's direct remover preserves
-  modified files, no-clobber files, known cross-product paths, and files whose MSI component state is
-  uncertain. Registered uninstalls stop before vendor removal when the payload is unavailable, the
+- **Uninstalls** stage/read the MSI before the default registered removal route. That route attempts
+  preset rescue before Wine's `msiexec /x`. A failed rescue stops the job whenever rescue is required
+  by the selected route. The toolkit's direct
+  remover preserves modified files, no-clobber files, known cross-product paths, and files whose MSI
+  component state is uncertain. Registered uninstalls stop before vendor removal when the payload is unavailable, the
   cached-MSI ownership scan is incomplete, or another cached product claims a planned path.
   `--files-only` skips Wine on the CLI. Wine's vendor uninstall can still remove other files; back up
   your data (see [uninstall limits](#scope-and-limitations)).
 - **Inventories** what is installed, and finds installs that registered but never copied their files.
-- **Hides and restores** a plugin from your DAW's scanner without touching anything else.
+- **Hides and restores** a plugin from your DAW's scanner with a reversible rename.
 - **Attempts Linux extraction first** for recognised 7-Zip, Inno, InstallShield, NSIS, Burn and CAB
   wrapper families when the corresponding unpacker is installed. This is not a promise that every
   vendor installer works without Wine; Advanced Installer (including Neural DSP) needs Wine.
 
 ## Why this exists
 
-Vendor MSIs assume Windows in three ways Wine cannot satisfy:
+Some vendor MSIs assume Windows behavior Wine does not provide on these paths:
 
 1. a **bootstrapper-only launch condition**, like `SETUPEXEDIR OR (REMOVE="ALL")`, so `msiexec /i`
    cannot succeed (error **1603**);
 2. **JScript custom actions** built on `Scripting.FileSystemObject` and `WScript.Shell`: Wine's stubs
    answer `Object doesn't support this action`, the install copies nothing (error **103**) and still
    registers the product as installed;
-3. an invisible **maintenance dialog** on the upgrade path, which Wine never paints, so the installer
-   waits forever.
+3. an invisible **maintenance dialog** on some upgrade paths, which Wine may not paint, leaving the
+   installer waiting until the process is stopped.
 
-`msitools` can read and unpack those same MSIs on Linux. This tool uses that to place the payload
-directly and check it afterwards. The case that started it: an Archetype plugin upgrade where the
+For supported packages, `msitools` can read and unpack the MSI on Linux. This tool uses that route to
+place selected payload files and check them afterwards; package-specific behavior still needs validation. The case that started it: an Archetype plugin upgrade where the
 wrapper hung at *"Starting install"* with an empty progress bar, `msiexec` failed twice, and the prefix
 claimed the product was installed while not one plugin file existed on disk.
 
 ## Requirements
 
-- Linux, x86-64, Python 3.11 or newer
-- `msitools` (the only hard dependency)
-- A Wine prefix in the ableton-linux shape: `~/.wine-ableton` plus a staged
-  `~/.local/opt/wine-d2d1-nspa-<version>` tree. If yours is elsewhere, every command takes
-  `--prefix` and `--tree`
-- `pyside6`, only if you want the GUI
+- Linux on x86-64 and Python 3.11 or newer. On Debian/Ubuntu, check `python3 --version` because the
+  distro default may not meet this requirement.
+- `msitools` for reading and unpacking MSI packages.
+- A prepared ableton-linux Wine prefix with `drive_c` (default `~/.wine-ableton`), plus a staged tree
+  under `~/.local/opt/wine-d2d1-nspa-<version>` containing `bin/wine`. This is the expected stack
+  for GUI and manager commands that inspect or modify a prefix. Top-level help and metadata-only
+  `wpt inspect` do not start Wine.
+- For non-default paths, set `WINEPREFIX` or use the global `--prefix` and `--tree` options before
+  the subcommand. `--home` is a discovery override, not a general `HOME` override; it changes the
+  home used for Wine-tree/product discovery and the rescue-store
+  check in `wpt doctor`. It does not change the Wine prefix or redirect the preset store used by
+  `presets` and uninstall, update cache/config or Downloads search. Those still use the current
+  `$HOME`/XDG locations; the prefix also honors `$WINEPREFIX`. When `--home` differs from `$HOME`,
+  `doctor` may inspect a different rescue store from the one uninstall writes to.
+- `pyside6` only if you want the GUI.
+
+WPT does not bundle this patched Wine runtime. The [ableton-linux project](https://github.com/shibco/ableton-linux) documents how to prepare the prefix and staged Wine tree. `Run in Standalone`, installer fallbacks that require Windows code, a registered uninstall, and registry removal with `--purge` all need the selected tree's working `bin/wine`. MSI metadata and supported file operations can use `msitools` without launching Wine. WPT selects the newest matching staged tree; it does not promise that every Wine build or patch set is compatible with every plugin.
 
 ```bash
 # Arch / CachyOS
 sudo pacman -S python msitools pyside6
 
-# Debian / Ubuntu
-sudo apt install python3 msitools python3-pyside6.qtwidgets
+# Debian / Ubuntu, after checking python3 is 3.11 or newer
+sudo apt install python3 python3-venv msitools
 ```
 
 ## Install
@@ -84,9 +112,12 @@ Every release attaches a built package and its checksum. Download both from the
 check the download, then install it:
 
 ```bash
+VERSION=0.6.5
+PKGREL=1
+PACKAGE="wine-plugin-toolkit-${VERSION}-${PKGREL}-any.pkg.tar.zst"
 cd ~/Downloads
-sha256sum -c wine-plugin-toolkit-*.pkg.tar.zst.sha256   # the checksum must match
-sudo pacman -U wine-plugin-toolkit-*.pkg.tar.zst
+sha256sum -c "${PACKAGE}.sha256"
+sudo pacman -U "$PACKAGE"
 ```
 
 That gives you `wpt` (command line) and `wpt-gui` (windowed), a desktop entry in your application
@@ -101,20 +132,38 @@ Same release page, take the `wpt-<version>.tar.gz` asset instead, and build it y
 `base-devel`):
 
 ```bash
-tar xzf wpt-*.tar.gz && cd wine-plugin-toolkit-*/
-makepkg -si
+VERSION=0.6.5
+SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+cd ~/Downloads
+sha256sum -c "${SOURCE_TARBALL}.sha256"
+tar xzf "$SOURCE_TARBALL"
+cd "wine-plugin-toolkit-${VERSION}"
+SRCDEST="$HOME/Downloads" makepkg -si
 ```
 
 ### Any other Linux, from source
 
-This does not need to be packaged to work. From a checkout or an extracted tarball:
+The source archive and its checksum are attached to each [release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest). Verify and extract it first:
+
+```bash
+VERSION=0.6.5
+SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+cd ~/Downloads
+sha256sum -c "${SOURCE_TARBALL}.sha256"
+tar xzf "$SOURCE_TARBALL"
+cd "wine-plugin-toolkit-${VERSION}"
+```
+
+From that directory, or the root of a source checkout, install into a virtual environment:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install '.[gui]'      # drop [gui] if you only want the CLI
+.venv/bin/python -m pip install '.[gui]'   # drop [gui] if you only want the CLI
 .venv/bin/wpt env
 ```
 
+The venv commands live in `.venv/bin`. Activate it in each terminal before using the bare `wpt`
+and `wpt-gui` commands below (`. .venv/bin/activate`), or run them with the `.venv/bin/` prefix.
 Anything installed this way is a copy, so `wpt update` (which installs an Arch package) does not
 apply to it. Update it the same way you installed it.
 
@@ -127,20 +176,24 @@ wpt list            # what is actually installed in there, and is it intact
 ```
 
 `doctor` says what to fix if something is missing, and exits non-zero so you can use it in a script.
-If it cannot find your Wine stack, tell it where to look: `wpt --prefix ~/.wine-ableton --tree ~/.local/opt/wine-d2d1-nspa-11.13 doctor`.
+If it cannot find your Wine stack, tell it where to look. Replace `11.13` with your installed tree version; the global options go before the subcommand:
+
+```bash
+wpt --prefix "$HOME/.wine-ableton" --tree "$HOME/.local/opt/wine-d2d1-nspa-11.13" doctor
+```
 
 ## Coming from Windows
 
-You paid for this software. Removing plugin files does not return an iLok activation slot;
-licensing remains a separate vendor/iLok step.
-It writes plugin files inside the prefix and may also use scratch space, preset-rescue storage and
-exports outside it; Wine's own uninstall can affect host paths mapped into the prefix.
+**Licensing and files.** Removing plugin files does not free or transfer an iLok activation; handle
+activation separately through the vendor or iLok. WPT writes plugin files inside the prefix and may
+also use scratch space, preset-rescue storage and exports outside it. Wine's own uninstall can affect
+host paths mapped into the prefix, so back up important data first.
 
-**What you need first.** A working ableton-linux install, which is what creates `~/.wine-ableton` and
-the staged Wine build this tool looks for. That project is the one that makes Live itself run.
-This tool sits next to it: ableton-linux tells you to install plugins by hand, by running the vendor's
-`.exe` inside the prefix, which is exactly the step that hangs the whole time. This is the tool that
-does that step properly.
+**What you need first.** Prepare the prefix and staged Wine tree using the
+[ableton-linux project](https://github.com/shibco/ableton-linux). WPT works with that configured
+stack; it does not replace the runtime setup or guarantee every vendor installer will work. For
+supported packages, WPT can extract and verify MSI payloads on Linux. Installers that require Windows
+code run through the selected Wine tree.
 
 **Your plugin installers.** Move the `.exe` and `.msi` files you downloaded on Windows into
 `~/Downloads` on Linux (a USB stick or your network drive is fine). Then:
@@ -220,7 +273,7 @@ wpt presets                 # your presets and downloaded packs, and what has be
 neither is not installed. A plugin that shows in `scan` but not `list` is the failure this tool was
 written for: registered, with the files missing.
 
-Useful flags, common to the commands that need them:
+Useful options. Global flags must come before the subcommand (for example, `wpt --prefix PREFIX --tree TREE list`); operation flags follow the command:
 
 | flag | why |
 |---|---|
@@ -229,11 +282,17 @@ Useful flags, common to the commands that need them:
 | `--no-vst2` / `--no-standalone` / `--no-presets` | skip parts you do not want |
 | `--aax` | include the AAX plugin (Pro Tools only, off by default) |
 | `--scratch <dir>` | where the payload is extracted (default `/tmp/wpt-extract`) |
-| `--prefix`, `--tree`, `--user` | override detection |
+| `--home <dir>`, `--prefix <dir>`, `--tree <dir>`, `--user <name>` | global: set discovery home, Wine prefix/tree or Windows user; place before the subcommand. See the home-scope note above. |
 | `--json` | machine-readable output, for a bug report |
 
-Exit codes: `0` ok · `1` verification or scan found problems · `2` bad input · `3` environment not
-found · `4` msitools error.
+Most CLI exit codes: `0` ok · `1` verification, scan or system error · `2` bad input ·
+`3` environment not found · `4` msitools error, external-tool timeout or uninstall preflight
+read/safety failure · `5` catalogue error · `130` interrupted.
+
+For uninstall, `1` includes rescue, msiexec (including timeout), post-msiexec verification, file
+removal or registry purge failures; unexpected system errors also return `1`. Missing MSI or
+ProductCode input is `2`. `4` covers an MSI/plan preflight read failure or safety refusal.
+`wpt doctor` uses `0/1/2` for clean/warning/failure, as described below.
 
 ### The vendor's `.exe`, and the MSI inside it
 
@@ -322,9 +381,9 @@ wpt presets --sources                           # where to get more: repositorie
 wpt presets --open "Preset Junkie" --product "Nolly X"
 ```
 
-**Presets are the one thing an install or uninstall cycle cannot bring back.** Factory and artist
-presets come back with a reinstall. Your own (`<product>/User/*.xml`), downloaded packs
-(`<vendor>/<vendor>/<Pack> Presets/`) and hand-made MIDI maps do not. The toolkit attempts to copy
+**Presets and user files may not be recoverable after an install or uninstall. Back them up first.**
+Factory and artist presets usually come back with a reinstall. Your own (`<product>/User/*.xml`),
+downloaded packs (`<vendor>/<vendor>/<Pack> Presets/`) and hand-made MIDI maps may not. The toolkit attempts to copy
 presets it recognises to `~/.local/share/wpt/presets/<product>/<timestamp>/` before both Wine's
 `msiexec /x` and its own file deletion, without overwriting an existing rescue. A failed rescue
 copy stops the job. The GUI has no `--files-only` equivalent. The toolkit now leaves files outside
@@ -413,6 +472,12 @@ Six tabs, in the order you use them, each a thin wrapper over the same core func
   the selected profile's custom Wine tree and environment. Unverified MSI ownership is marked in the action; the app may contact
   its licensing service. `Program Files (x86)` is not searched. WPT reuses the selected Wine stack for
   ASIO, but does not install/configure PipeASIO or choose audio devices; set those up in Wine first.
+  Within one WPT window, multiple apps can be launched under its active profile; tracked groups block
+  profile changes, prefix writes and update restarts while active. WPT starts each launcher in a separate
+  session and does not signal it when the window closes. Vendor apps may impose their own concurrency
+  limits. Closing with active groups requires **Close WPT; don't stop apps**; the default and Escape keep
+  WPT open. Closing ends that window's tracking; reopened or separate WPT windows do not rediscover earlier
+  launches. Close those apps, detached helpers and licensing services before using WPT to modify the prefix.
 - **Download**: Neural DSP's catalogue, with version, release date, whether it is installed here and
   whether an installer is already in `~/Downloads`. *Download Selected Plugin* opens its page in your
   browser; the *Preset & IR sources* row opens preset sites for the plugin you have selected.
@@ -430,8 +495,8 @@ A disabled plugin stays visible, flagged `disabled`, so it can be brought back.
 
 ## How it verifies
 
-The toolkit does not take an installer's exit status as proof of correct file placement. On this
-unpublished branch it checks selected File-table paths, but **size is not a content hash**:
+The toolkit does not take an installer's exit status as proof of correct file placement. In this
+version it checks selected File-table paths, but **size is not a content hash**:
 
 - the **plan** maps Directory/Component/File rows to full destination paths. Payload builds reject
   a missing, extra or wrong-sized extracted file before copying; tables-only plans cannot install;
@@ -447,9 +512,9 @@ unpublished branch it checks selected File-table paths, but **size is not a cont
   changed since inventory (refresh to retry). Logs go to absolute
   `$XDG_CACHE_HOME/wpt/standalone/`; if it is unset or non-absolute, WPT falls back to
   `~/.cache/wpt/standalone/`. Logs are retained, not auto-pruned.
-  This GUI blocks writes, second launches and update restarts while the launched Wine process group is alive.
-  Closing WPT requires an explicit **Close anyway** choice; the default and Escape/titlebar dismissal keep it open.
-  Detached helpers/services and apps launched elsewhere are not tracked; close them before prefix writes.
+  `wpt/standalone.py` uses `start_new_session=True`. The GUI test checks two synthetic fake-Wine child
+  process groups survive WPT close; `standalone_process_detach_check.py` checks a child survives its
+  launcher interpreter exiting. Neither test exercises real Wine, vendor software, licensing or services.
   Size agreement is not a content hash;
 - `wpt doctor` checks the surrounding environment. GUI suites exercise tabs offscreen on a machine
   with PySide6; they do not replace real-desktop checks.
@@ -461,9 +526,9 @@ an `ok` result as a complete MSI payload audit.
 ## Scope and limitations
 
 - Earlier 0.6.4 work exercised **Neural DSP** installers (Advanced Installer and MSI) against a
-  real `~/.wine-ableton` prefix. That is historical evidence, **not a real-install or live-uninstall
-  validation of these unpublished manifest changes**. This branch has read-only table/listing
-  comparisons and disposable-prefix tests; no real prefix has been modified to test it.
+  real Wine prefix. That is historical evidence, **not a real-install or live-uninstall
+  validation of the manifest/uninstall changes in 0.6.5**. This version has read-only table/listing
+  comparisons and disposable-prefix tests; no real prefix has been modified to test those changes.
 - **Wrapper families**: the recorded real-wrapper examples cover a 7-Zip self-extractor (a Neural
   DSP hardware wrapper), WiX Burn bundles (`vc_redist` and `dotnet-runtime`) and Advanced Installer
   (refused as Wine-only). The other named families are code paths, not a claim that a real installer
@@ -550,6 +615,9 @@ QT_QPA_PLATFORM=offscreen python3 tests/gui_buttons_check.py  # clicks every but
 python3 tests/readme_claims_check.py    # parser/tabs/flags/known limitations (not real-MSI proof)
 ```
 
+The full runner isolates `TMPDIR` only. Use disposable `HOME`, XDG paths and `WINEPREFIX` as described
+in [TESTING.md](TESTING.md); never point the full or GUI suite at a live prefix.
+
 `test_core.py` covers Wine tree version ordering, `.reg` value decoding (including UTF-16 `str(2)`
 blobs), Windows to Linux path mapping, plugin-path classification, destination resolution from MSI
 directory properties, and the CLI surface. `test_prefix_integration.py` builds a fake `~/.wine-ableton`
@@ -591,16 +659,16 @@ MIT licensed. See [LICENSE](LICENSE) and [CHANGELOG.md](CHANGELOG.md).
 
 ## AI Disclosure
 
-Development here is AI-assisted: an agent (Hermes, by Nous Research, driving models through
-OpenRouter — the model varies by task) assists with diagnosis, reproduction, implementation,
-test authoring, documentation and release tooling. The maintainer owns release decisions.
+Development here is AI-assisted. An agent (Hermes, by Nous Research) uses models through OpenRouter,
+which can vary by task. The agent helps with diagnosis, reproduction, implementation, test authoring,
+documentation and release tooling. The maintainer owns release decisions.
 
 The release gate for future changes requires a reproduced defect, a regression check, the full suite
 from an extracted release tarball, an independent review, and checksum comparison of published
-artefacts against what was built. The current 0.6.4 code predates the claim ledger and has the
-verification and uninstall limitations stated above. A passing script alone does not certify every
+artefacts against what was built. The published 0.6.4 release predates the claim ledger; version
+0.6.5 retains the verification and uninstall limitations stated above. A passing script alone does not certify every
 README sentence; see [the claim ledger](docs/CLAIMS.md) for what is still open.
 
 Contributions: AI-assisted work is welcome if you understand it and can explain the change, and if
-it comes with evidence — a reproduction, a test, or a reason. We will not accept fully-vibecoded
+it comes with evidence: a reproduction, a test, or a reason. We will not accept fully-vibecoded
 contributions, where nobody can account for the code, because the risk of regression is too high.

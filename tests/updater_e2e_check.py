@@ -1,7 +1,8 @@
 """End-to-end check of the updater against the artefacts we are about to publish.
 
 GitHub cannot serve the new release before it is published, so this stands a GitHub-API-shaped stub
-on localhost, serves the four release assets from dist/, and then runs the *real* updater code -
+on localhost, serves four release assets from WPT_RELEASE_ASSET_DIR (default: WPT_RELEASE_DIR/dist),
+and then runs the *real* updater code -
 latest_release, is_newer, asset selection, download, the zstd check, the per-asset checksum - plus
 the real `wpt update --install show` command. Nothing is installed; that is the one step that needs
 a password.
@@ -10,7 +11,8 @@ The two versions it is about are read from the tree: the release being cut is th
 CHANGELOG.md, and the release before it is the one after that. Pinned literals meant editing this
 gate on every release, and quietly checking the wrong pair when nobody did.
 
-    WPT_RELEASE_DIR=~/wpt-release python3 tests/updater_e2e_check.py
+    WPT_RELEASE_DIR=~/wpt-release WPT_RELEASE_ASSET_DIR=~/wpt-pkg \
+        python3 tests/updater_e2e_check.py
 """
 
 from __future__ import annotations
@@ -28,7 +30,7 @@ import threading
 from pathlib import Path
 
 release_dir = Path(os.environ.get("WPT_RELEASE_DIR", "~/wpt-release")).expanduser()
-dist = release_dir / "dist"
+dist = Path(os.environ.get("WPT_RELEASE_ASSET_DIR", str(release_dir / "dist"))).expanduser()
 sys.path.insert(0, str(release_dir))
 
 from wpt import updates as updates_mod  # noqa: E402
@@ -72,12 +74,22 @@ if missing:
     print(f"missing artefacts in {dist} for {NEW}: {missing}")
     sys.exit(2)
 
+work = Path(tempfile.mkdtemp(prefix="wpt-update-e2e-"))
+asset_server_dir = work / "assets"
+try:
+    asset_server_dir.mkdir()
+    for name in ASSETS:
+        shutil.copy2(dist / name, asset_server_dir / name)
+except BaseException:
+    shutil.rmtree(work, ignore_errors=True)
+    raise
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves dist/ as the asset host and a GitHub-shaped latest-release document."""
+    """Serve a scratch copy of the four release assets and a GitHub-shaped response."""
 
     def __init__(self, *a, **k):
-        super().__init__(*a, directory=str(dist), **k)
+        super().__init__(*a, directory=str(asset_server_dir), **k)
 
     def log_message(self, *_a):        # keep the output readable
         pass
@@ -91,7 +103,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "published_at": "2026-09-27T00:00:00Z",
                 "body": "stub",
                 "assets": [
-                    {"name": name, "size": (dist / name).stat().st_size,
+                    {"name": name, "size": (asset_server_dir / name).stat().st_size,
                      "browser_download_url": f"http://127.0.0.1:{port}/{name}"}
                     for name in ASSETS
                 ],
@@ -105,15 +117,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-port = server.server_address[1]
-threading.Thread(target=server.serve_forever, daemon=True).start()
-print(f"stub release host on 127.0.0.1:{port}, assets from {dist}")
+server = None
+server_thread = None
+try:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+except BaseException:
+    if server is not None and server_thread is not None and server_thread.is_alive():
+        server.shutdown()
+        server_thread.join(timeout=5)
+    if server is not None:
+        server.server_close()
+    shutil.rmtree(work, ignore_errors=True)
+    raise
+assert server is not None and server_thread is not None
+print(f"stub release host on 127.0.0.1:{port}, isolated assets from {asset_server_dir}")
 print(f"cutting {NEW}, upgrading from {PREV}")
 
 updates_mod.API = f"http://127.0.0.1:{port}"
 updates_mod.REPO = "stub/repo"
-work = Path(tempfile.mkdtemp(prefix="wpt-update-e2e-"))
 
 try:
     print("\n1. reading the release, as the updater does")
@@ -140,7 +164,7 @@ try:
     fetched = updates_mod.download(asset, work)
     check("downloaded", fetched.is_file(), True)
     check("byte-for-byte what we built",
-          updates_mod.sha256(fetched), hashlib.sha256((dist / asset.name).read_bytes()).hexdigest())
+          updates_mod.sha256(fetched), hashlib.sha256((asset_server_dir / asset.name).read_bytes()).hexdigest())
 
     print("\n4. the checks the updater runs before it hands a file to pacman")
     checksum_asset = release.checksum_for(asset)
@@ -152,8 +176,8 @@ try:
     print("  ok    the package passes the zstd magic check")
 
     print("\n5. the 0.6.1 regression: a sums file naming only the tarball must not verify the package")
-    sums = dist / "sha256sums.txt"
-    sums.write_text(f"{hashlib.sha256((dist / TARBALL).read_bytes()).hexdigest()}  {TARBALL}\n")
+    sums = asset_server_dir / "sha256sums.txt"
+    sums.write_text(f"{hashlib.sha256((asset_server_dir / TARBALL).read_bytes()).hexdigest()}  {TARBALL}\n")
     try:
         lone = updates_mod.Release(tag=f"v{NEW}", version=NEW_TUPLE, html_url="",
                                    assets=[updates_mod.Asset(name="sha256sums.txt",
@@ -167,7 +191,8 @@ try:
     home = work / "home"
     home.mkdir()
     env = dict(os.environ, HOME=str(home), XDG_CACHE_HOME=str(home / ".cache"),
-               XDG_CONFIG_HOME=str(home / ".config"), PYTHONPATH=str(release_dir))
+               XDG_CONFIG_HOME=str(home / ".config"), TMPDIR=str(work),
+               PYTHONPATH=str(release_dir))
 
     def run_cli(running_version: str) -> tuple[int, str]:
         """Run the real CLI with the running version it should believe it has.
@@ -175,10 +200,16 @@ try:
         `running_version` is patched rather than the release, because the release is the thing under
         test: a user on the published release is the case that has to work.
         """
+        arch_override = (
+            "updates.is_arch_family = lambda: True;"
+            if os.environ.get("WPT_UPDATER_E2E_ASSUME_ARCH") == "1"
+            else ""
+        )
         wrapper = (
             "import sys; sys.path.insert(0, sys.argv[1]);"
             "from wpt import updates;"
             f"updates.API = {updates_mod.API!r}; updates.REPO = 'stub/repo';"
+            f"{arch_override}"
             f"updates.__version__ = {running_version!r};"
             "from wpt import cli; sys.argv = ['wpt','update','--install','show'];"
             "raise SystemExit(cli.main())"
@@ -202,6 +233,8 @@ try:
     check("and no download was attempted", "downloading" in out, False)
 finally:
     server.shutdown()
+    server.server_close()
+    server_thread.join(timeout=5)
     shutil.rmtree(work, ignore_errors=True)
 
 print(f"\nupdater end-to-end: {checks - len(failures)}/{checks} passed")

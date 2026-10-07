@@ -30,6 +30,7 @@ from wpt.launch_profiles import LaunchProfile, ProfileStore, load_store, profile
 from wpt.launch_profile_ui import LaunchProfilesDialog  # noqa: E402
 from wpt.inventory import Inventory, PluginEntry  # noqa: E402
 from wpt.standalone import StandaloneLaunch  # noqa: E402
+import wpt.gui as gui_mod  # noqa: E402
 from wpt.gui import MainWindow  # noqa: E402
 
 checks = 0
@@ -102,15 +103,39 @@ def main() -> int:
         check("prefix-write action is disabled after switch", window.btn_repair.isEnabled(), False)
         check("selection is persisted", window.profile_store.active, "Mantra test")
 
-        print("3. Profile switching is refused while a standalone process group is alive")
+        print("3. Profile switching remains blocked if any concurrent standalone group is alive")
+        assert window.env is not None
+        dead_process = SimpleNamespace(pid=7653, poll=lambda: 0)
+        dead_launch = StandaloneLaunch(
+            process=dead_process,  # type: ignore[arg-type]
+            log_path=root / "finished.log",
+            size_matches=False,
+        )
         live_process = SimpleNamespace(pid=7654, poll=lambda: None)
-        live_launch = StandaloneLaunch(process=live_process, log_path=root / "live.log", size_matches=False)
-        window._standalone_launches = [live_launch]
+        live_launch = StandaloneLaunch(
+            process=live_process,  # type: ignore[arg-type]
+            log_path=root / "live.log",
+            size_matches=False,
+        )
+        window._standalone_launches = [dead_launch, live_launch]
+        with patch.object(gui_mod.os, "killpg", side_effect=ProcessLookupError):
+            window.profile_combo.setCurrentIndex(1)
+            app.processEvents()
+        check("finished launch is pruned independently", window._standalone_launches, [live_launch])
+        check("active prefix stays unchanged while another standalone runs", window.env.prefix, prefix_b)
+        check("profile selection reverts while a standalone runs", window.profile_combo.currentData(), "Mantra test")
+        check("refusal is visible", "close standalone" in window.env_note.text().lower(), True)
+        second_process = SimpleNamespace(pid=7655, poll=lambda: None)
+        second_live = StandaloneLaunch(
+            process=second_process,  # type: ignore[arg-type]
+            log_path=root / "second-live.log",
+            size_matches=False,
+        )
+        window._standalone_launches = [live_launch, second_live]
         window.profile_combo.setCurrentIndex(1)
         app.processEvents()
-        check("active prefix stays unchanged while standalone runs", window.env.prefix, prefix_b)
-        check("profile selection reverts while standalone runs", window.profile_combo.currentData(), "Mantra test")
-        check("refusal is visible", "close standalone" in window.env_note.text().lower(), True)
+        check("multiple active groups remain tracked", window._standalone_launches, [live_launch, second_live])
+        check("profile remains unchanged with multiple active groups", window.env.prefix, prefix_b)
         window._standalone_launches.clear()
 
         print("4. Profile manager is available next to the selector")

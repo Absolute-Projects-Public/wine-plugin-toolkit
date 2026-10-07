@@ -71,12 +71,24 @@ class Report:
         return 1 if self.warnings else 0
 
 
-def check_environment(report: Report) -> Environment | None:
+def check_environment(
+    report: Report,
+    *,
+    home: str | Path | None = None,
+    prefix: str | Path | None = None,
+    wine_tree: str | Path | None = None,
+    user: str | None = None,
+) -> Environment | None:
     try:
-        env = detect()
+        env = detect(home=home, prefix=prefix, wine_tree=wine_tree, user=user)
     except EnvironmentError_ as exc:
-        report.add("environment", FAIL, str(exc),
-                   "Is this an ableton-linux Wine prefix? Pass --prefix/--tree to say so.")
+        report.add(
+            "environment",
+            FAIL,
+            str(exc),
+            "Is this an ableton-linux Wine prefix? Use global overrides before the subcommand: "
+            "wpt --prefix PREFIX --tree TREE doctor.",
+        )
         return None
 
     report.add(
@@ -262,9 +274,19 @@ def check_rescued_presets(report: Report, env: Environment) -> None:
                f"{len(products)} product(s), largest holding {newest} preset file(s) - keep this directory")
 
 
-def run(env: Environment | None = None, scratch: Path | None = None) -> Report:
+def run(
+    env: Environment | None = None,
+    scratch: Path | None = None,
+    *,
+    home: str | Path | None = None,
+    prefix: str | Path | None = None,
+    wine_tree: str | Path | None = None,
+    user: str | None = None,
+) -> Report:
     report = Report()
-    env = env or check_environment(report)
+    env = env or check_environment(
+        report, home=home, prefix=prefix, wine_tree=wine_tree, user=user
+    )
     if env is None:
         return report
     check_tools(report)

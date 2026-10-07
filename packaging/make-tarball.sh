@@ -1,8 +1,22 @@
 #!/bin/bash
-# Build the source tarball the PKGBUILD consumes, then (optionally) makepkg.
-#   bash packaging/make-tarball.sh [--build]
+# Build the committed source tarball the PKGBUILD consumes.
+# Use packaging/build-local.sh for a checksum-verified local package build.
 set -euo pipefail
 umask 022
+if [[ "${1:-}" == "--build" ]]; then
+    echo "refusing legacy --build mode; use packaging/build-local.sh for a pinned package build" >&2
+    exit 2
+elif (($#)); then
+    echo "usage: bash packaging/make-tarball.sh" >&2
+    exit 2
+fi
+TMP_BASE="${TMPDIR:-/tmp}"
+if [[ "$TMP_BASE" != /* ]]; then
+    TMP_BASE="$PWD/$TMP_BASE"
+fi
+[[ -d "$TMP_BASE" ]] || { echo "TMPDIR is not an existing directory: $TMP_BASE" >&2; exit 2; }
+TMP_BASE=$(cd "$TMP_BASE" && pwd -P)
+export TMPDIR="$TMP_BASE"
 cd "$(dirname "$0")/.."
 python3 packaging/check_version.py
 
@@ -21,7 +35,7 @@ mkdir -p dist
 # the release tarball ships `sha256sums=('SKIP')` (nothing to verify -- the reader already has the
 # file), while the PKGBUILD in git carries the real hash of this tarball. Without this the two
 # would chase each other: editing the hash changes the tarball, which changes the hash.
-STAGE=$(mktemp -d "${TMPDIR:-/tmp}/wpt-tarball-XXXX")
+STAGE=$(mktemp -d "$TMP_BASE/wpt-tarball-XXXX")
 trap 'rm -rf "$STAGE"' EXIT
 ROOT="$STAGE/wine-plugin-toolkit-$VERSION"
 mkdir -p "$ROOT"
@@ -41,10 +55,3 @@ tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' \
 
 echo "wrote dist/$NAME ($(stat -c %s "dist/$NAME") bytes)"
 sha256sum "dist/$NAME"
-
-if [ "${1:-}" = "--build" ]; then
-    cp "dist/$NAME" .
-    makepkg -f
-    rm -f "$NAME"
-    echo "package: $(find . -maxdepth 1 -name 'wine-plugin-toolkit-*.pkg.tar.zst' -printf '%f\n')"
-fi
