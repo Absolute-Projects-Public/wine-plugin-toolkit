@@ -11,8 +11,7 @@ WPT is a Linux-side manager for supported Neural DSP Windows plugins. It install
 repairs and removes plugin files in an **ableton-linux** Wine prefix, and can launch installed
 standalone apps.
 
-Developed on CachyOS with the ableton-linux stack. Neural DSP's Nolly X was installed with WPT v0.4.0
-and confirmed running in Ableton; its standalone app also launched on that setup. The GUI can save
+Developed on CachyOS with the ableton-linux stack. The GUI can save
 and switch between Wine and prefix profiles. Set up PipeASIO separately through ableton-linux; WPT
 does not configure audio routing.
 The 0.6.5 file-manifest, install-plan and uninstall paths have synthetic-prefix tests only. The
