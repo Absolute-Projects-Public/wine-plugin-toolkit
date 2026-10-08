@@ -5,27 +5,28 @@
 [![release](https://img.shields.io/github/v/release/Absolute-Projects-Public/wine-plugin-toolkit?label=release)](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest)
 [![licence](https://img.shields.io/github/license/Absolute-Projects-Public/wine-plugin-toolkit)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
-[![platform](https://img.shields.io/badge/platform-Arch%20%2F%20CachyOS-1793d1)](#install)
+[![platform](https://img.shields.io/badge/platform-Linux%20x86--64-1793d1)](#install)
 
-Helps install supported Windows audio plugins into an **ableton-linux** Wine prefix when the vendor's
-installer does not work under Wine, then inspect the files it placed. File-table paths include duplicate basenames and
-bundle internals, but size-based inventory/repair does not detect same-sized edits or establish full
-MSI component selection; see [verification limits](#how-it-verifies).
+WPT is a Linux-side manager for supported Neural DSP Windows plugins. It installs, inventories,
+repairs and removes plugin files in an **ableton-linux** Wine prefix, and can launch installed
+standalone apps.
 
-**Version: 0.6.5.** This is an early tool developed against the
-ableton-linux Wine stack on CachyOS. Earlier releases were exercised against selected real Neural DSP
-installers; the 0.6.5 manifest/uninstall changes have synthetic-prefix coverage, not live-prefix
-validation. Other vendors and prefix types are triaged read-only rather than promised. Bug reports are
-welcome: `wpt doctor` prints most of what is needed for one.
+Developed on CachyOS with the ableton-linux stack. Neural DSP's Nolly X was installed with WPT v0.4.0
+and confirmed running in Ableton; its standalone app also launched on that setup. The GUI can save
+and switch between Wine and prefix profiles. Set up PipeASIO separately through ableton-linux; WPT
+does not configure audio routing.
+The 0.6.5 file-manifest, install-plan and uninstall paths have synthetic-prefix tests only. The
+profile-based standalone launcher has fake-Wine tests only. Neither has live-prefix validation.
+See [verification limits](#how-it-verifies).
 
 ![The Download tab, dark mode](docs/download-tab.png)
 
 ## Contents
 
+- [Install](#install)
+- [Requirements](#requirements)
 - [What it does](#what-it-does)
 - [Why this exists](#why-this-exists)
-- [Requirements](#requirements)
-- [Install](#install)
 - [Coming from Windows](#coming-from-windows)
 - [Command line](#command-line)
 - [GUI](#gui)
@@ -34,6 +35,202 @@ welcome: `wpt doctor` prints most of what is needed for one.
 - [Development](#development)
 - [Credits](#credits)
 - [AI Disclosure](#ai-disclosure)
+
+## Install
+
+Choose your distro below. The release includes a ready-to-install package for Arch-based systems.
+Other distributions install from the verified source archive in an isolated Python environment.
+
+These commands install WPT. `wpt doctor` reports missing system tools but does not install them.
+The Arch updater can install a WPT update with pacman when you choose it.
+Before using WPT, set up the ableton-linux Wine prefix and staged Wine tree. Configure PipeASIO
+separately if you need audio. Back up the prefix before install, repair or uninstall operations.
+These steps do not install Neural DSP plugins or Wine.
+
+<details>
+<summary>Arch / CachyOS (recommended)</summary>
+
+1. Download the `wine-plugin-toolkit` package and matching `.sha256` file from the
+   [latest release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest).
+2. In the download folder, verify and install the exact package you downloaded. Replace the version
+   and package revision below if the release is newer:
+
+   ```bash
+   cd ~/Downloads
+   VERSION=0.6.5
+   PKGREL=1
+   PACKAGE="wine-plugin-toolkit-${VERSION}-${PKGREL}-any.pkg.tar.zst"
+   sha256sum -c "${PACKAGE}.sha256"
+   sudo pacman -U "$PACKAGE"
+   ```
+
+   Pacman installs the required Python and `msitools` dependencies. For the GUI, also install the
+   optional `pyside6` package with `sudo pacman -S pyside6`.
+3. Run `wpt doctor`. Launch the window with `wpt-gui`.
+
+<details>
+<summary>Build the Arch package from source instead</summary>
+
+Install `base-devel`, then download the source archive and checksum from the release page. Verify
+and extract the exact archive before building:
+
+```bash
+sudo pacman -S base-devel
+cd ~/Downloads
+VERSION=0.6.5
+SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+sha256sum -c "${SOURCE_TARBALL}.sha256"
+tar xzf "$SOURCE_TARBALL"
+cd "wine-plugin-toolkit-${VERSION}"
+SRCDEST="$HOME/Downloads" makepkg -si
+```
+
+</details>
+
+</details>
+
+<details>
+<summary>Debian / Ubuntu and derivatives</summary>
+
+1. Install the system requirements. WPT needs Python 3.11 or newer; some older distro releases ship
+   an older default, so check the version first.
+
+   ```bash
+   python3 --version
+   sudo apt install python3 python3-venv msitools
+   ```
+
+   If the distro's `python3` is older than 3.11, install a supported Python version and its matching
+   venv package. In step 3, use that interpreter in place of `python3` (for example, `python3.11`).
+
+2. Download the `wpt-<version>.tar.gz` archive and matching checksum from the
+   [latest release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest),
+   then verify and extract it. Replace `0.6.5` with the release version you downloaded.
+
+   ```bash
+   cd ~/Downloads
+   VERSION=0.6.5
+   SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+   sha256sum -c "${SOURCE_TARBALL}.sha256"
+   tar xzf "$SOURCE_TARBALL"
+   cd "wine-plugin-toolkit-${VERSION}"
+   ```
+
+3. Install into a stable virtual environment and check the setup. The command includes the GUI extra.
+
+   ```bash
+   python3 -m venv "$HOME/.local/share/wpt/venv"  # create once, reuse for updates
+   "$HOME/.local/share/wpt/venv/bin/python" -m pip install --upgrade '.[gui]'
+   "$HOME/.local/share/wpt/venv/bin/wpt" doctor
+   ```
+
+   For CLI-only use, replace `'.[gui]'` with `.` in the install command. To open the GUI:
+
+   ```bash
+   "$HOME/.local/share/wpt/venv/bin/wpt-gui"
+   ```
+
+</details>
+
+<details>
+<summary>Fedora</summary>
+
+1. Install the system requirements. WPT needs Python 3.11 or newer.
+
+   ```bash
+   python3 --version
+   sudo dnf install python3 python3-pip msitools
+   ```
+
+2. Download the `wpt-<version>.tar.gz` archive and matching checksum from the
+   [latest release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest),
+   then verify and extract it. Replace `0.6.5` with the release version you downloaded.
+
+   ```bash
+   cd ~/Downloads
+   VERSION=0.6.5
+   SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
+   sha256sum -c "${SOURCE_TARBALL}.sha256"
+   tar xzf "$SOURCE_TARBALL"
+   cd "wine-plugin-toolkit-${VERSION}"
+   ```
+
+3. Install into a stable virtual environment and check the setup. The command includes the GUI extra.
+
+   ```bash
+   python3 -m venv "$HOME/.local/share/wpt/venv"  # create once, reuse for updates
+   "$HOME/.local/share/wpt/venv/bin/python" -m pip install --upgrade '.[gui]'
+   "$HOME/.local/share/wpt/venv/bin/wpt" doctor
+   ```
+
+   For CLI-only use, replace `'.[gui]'` with `.` in the install command. To open the GUI:
+
+   ```bash
+   "$HOME/.local/share/wpt/venv/bin/wpt-gui"
+   ```
+
+</details>
+
+<details>
+<summary>Other Linux distributions</summary>
+
+Install Python 3.11 or newer, its `venv` support, and `msitools` using your distro's package
+manager. Then follow the source-install steps above. GUI installs use the `.[gui]` extra; the
+optional wrapper unpackers may improve support for wrapped installers; package names vary by distro.
+
+</details>
+
+For later terminal sessions, activate the source-installed environment before using the commands
+below:
+
+```bash
+. "$HOME/.local/share/wpt/venv/bin/activate"
+```
+
+To remove a source install, remove only its `venv` directory. The sibling `presets` directory may
+contain rescued user data.
+
+## Requirements
+
+- Linux x86-64 and Python 3.11 or newer. On Debian/Ubuntu, check `python3 --version` because the
+  distro default may not meet this requirement.
+- `msitools` for reading and unpacking MSI packages.
+- A prepared [ableton-linux](https://github.com/shibco/ableton-linux) Wine prefix with `drive_c`
+  (default `~/.wine-ableton`), plus a staged tree under
+  `~/.local/opt/wine-d2d1-nspa-<version>` containing `bin/wine`.
+- PySide6 is optional and needed only for the GUI. Source installs include it with the `.[gui]` extra.
+- The GUI can save and switch between profiles that select a Wine tree and prefix. WPT does not bundle
+  the Wine runtime, install or configure PipeASIO, select audio devices or route audio. Configure
+  PipeASIO through ableton-linux before expecting audio. `Run in Standalone`, installer fallbacks
+  that require Windows code, a registered uninstall, and registry removal with `--purge` need the
+  selected tree's working `bin/wine`. MSI metadata and supported file operations can use `msitools`
+  without launching Wine. WPT selects the newest matching staged tree and does not promise every
+  Wine build or patch set works with every plugin.
+
+For non-default paths, set `WINEPREFIX` or pass the global `--prefix` and `--tree` options before
+the subcommand. `--home` is a discovery override, not a general `HOME` override; it changes the
+home used for Wine-tree/product discovery and the rescue-store check in `wpt doctor`. It does not change the Wine prefix or redirect the
+preset store used by `presets` and uninstall, update
+cache/config or Downloads search. Those use the current `$HOME`/XDG locations. When `--home`
+differs from `$HOME`, `doctor` may inspect a different rescue store from the one uninstall writes to.
+
+After installation, start with:
+
+```bash
+wpt doctor
+wpt env
+wpt list
+```
+
+`doctor` reports missing tools and the suggested fix. To point it at a non-default stack, put the
+global options before the subcommand. Replace `11.13` with your installed tree version:
+
+```bash
+wpt --prefix "$HOME/.wine-ableton" --tree "$HOME/.local/opt/wine-d2d1-nspa-11.13" doctor
+```
+
+Source installs are separate from the Arch package. `wpt update` updates Arch packages only; update
+a source install by installing the newer source release into its virtual environment.
 
 ## What it does
 
@@ -46,12 +243,12 @@ welcome: `wpt doctor` prints most of what is needed for one.
   no-clobber rules can leave a mismatch unresolved, and a same-size edit is not detectable.
 - **Uninstalls** stage/read the MSI before the default registered removal route. That route attempts
   preset rescue before Wine's `msiexec /x`. A failed rescue stops the job whenever rescue is required
-  by the selected route. The toolkit's direct
-  remover preserves modified files, no-clobber files, known cross-product paths, and files whose MSI
-  component state is uncertain. Registered uninstalls stop before vendor removal when the payload is unavailable, the
-  cached-MSI ownership scan is incomplete, or another cached product claims a planned path.
-  `--files-only` skips Wine on the CLI. Wine's vendor uninstall can still remove other files; back up
-  your data (see [uninstall limits](#scope-and-limitations)).
+  by the selected route. The toolkit's direct remover preserves modified files, no-clobber files,
+  known cross-product paths, and files whose MSI component state is uncertain. Registered uninstalls
+  stop before vendor removal when the payload is unavailable, the cached-MSI ownership scan is incomplete,
+  or another cached product claims a planned path. `--files-only` skips Wine on the CLI.
+  Wine's vendor uninstall can still remove other files; back up your data (see
+  [uninstall limits](#scope-and-limitations)).
 - **Inventories** what is installed, and finds installs that registered but never copied their files.
 - **Hides and restores** a plugin from your DAW's scanner with a reversible rename.
 - **Attempts Linux extraction first** for recognised 7-Zip, Inno, InstallShield, NSIS, Burn and CAB
@@ -71,116 +268,10 @@ Some vendor MSIs assume Windows behavior Wine does not provide on these paths:
    installer waiting until the process is stopped.
 
 For supported packages, `msitools` can read and unpack the MSI on Linux. This tool uses that route to
-place selected payload files and check them afterwards; package-specific behavior still needs validation. The case that started it: an Archetype plugin upgrade where the
-wrapper hung at *"Starting install"* with an empty progress bar, `msiexec` failed twice, and the prefix
-claimed the product was installed while not one plugin file existed on disk.
-
-## Requirements
-
-- Linux on x86-64 and Python 3.11 or newer. On Debian/Ubuntu, check `python3 --version` because the
-  distro default may not meet this requirement.
-- `msitools` for reading and unpacking MSI packages.
-- A prepared ableton-linux Wine prefix with `drive_c` (default `~/.wine-ableton`), plus a staged tree
-  under `~/.local/opt/wine-d2d1-nspa-<version>` containing `bin/wine`. This is the expected stack
-  for GUI and manager commands that inspect or modify a prefix. Top-level help and metadata-only
-  `wpt inspect` do not start Wine.
-- For non-default paths, set `WINEPREFIX` or use the global `--prefix` and `--tree` options before
-  the subcommand. `--home` is a discovery override, not a general `HOME` override; it changes the
-  home used for Wine-tree/product discovery and the rescue-store
-  check in `wpt doctor`. It does not change the Wine prefix or redirect the preset store used by
-  `presets` and uninstall, update cache/config or Downloads search. Those still use the current
-  `$HOME`/XDG locations; the prefix also honors `$WINEPREFIX`. When `--home` differs from `$HOME`,
-  `doctor` may inspect a different rescue store from the one uninstall writes to.
-- `pyside6` only if you want the GUI.
-
-WPT does not bundle this patched Wine runtime. The [ableton-linux project](https://github.com/shibco/ableton-linux) documents how to prepare the prefix and staged Wine tree. `Run in Standalone`, installer fallbacks that require Windows code, a registered uninstall, and registry removal with `--purge` all need the selected tree's working `bin/wine`. MSI metadata and supported file operations can use `msitools` without launching Wine. WPT selects the newest matching staged tree; it does not promise that every Wine build or patch set is compatible with every plugin.
-
-```bash
-# Arch / CachyOS
-sudo pacman -S python msitools pyside6
-
-# Debian / Ubuntu, after checking python3 is 3.11 or newer
-sudo apt install python3 python3-venv msitools
-```
-
-## Install
-
-### Arch / CachyOS, from the release (recommended)
-
-Every release attaches a built package and its checksum. Download both from the
-[latest release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest),
-check the download, then install it:
-
-```bash
-VERSION=0.6.5
-PKGREL=1
-PACKAGE="wine-plugin-toolkit-${VERSION}-${PKGREL}-any.pkg.tar.zst"
-cd ~/Downloads
-sha256sum -c "${PACKAGE}.sha256"
-sudo pacman -U "$PACKAGE"
-```
-
-That gives you `wpt` (command line) and `wpt-gui` (windowed), a desktop entry in your application
-menu, and completions for fish, bash and zsh. `pacman` will pull in `python` and `msitools` for you.
-
-Once installed, `wpt update` tells you when a newer release exists, and can download and install it
-for you.
-
-### Arch / CachyOS, from the source tarball
-
-Same release page, take the `wpt-<version>.tar.gz` asset instead, and build it yourself (needs
-`base-devel`):
-
-```bash
-VERSION=0.6.5
-SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
-cd ~/Downloads
-sha256sum -c "${SOURCE_TARBALL}.sha256"
-tar xzf "$SOURCE_TARBALL"
-cd "wine-plugin-toolkit-${VERSION}"
-SRCDEST="$HOME/Downloads" makepkg -si
-```
-
-### Any other Linux, from source
-
-The source archive and its checksum are attached to each [release](https://github.com/Absolute-Projects-Public/wine-plugin-toolkit/releases/latest). Verify and extract it first:
-
-```bash
-VERSION=0.6.5
-SOURCE_TARBALL="wpt-${VERSION}.tar.gz"
-cd ~/Downloads
-sha256sum -c "${SOURCE_TARBALL}.sha256"
-tar xzf "$SOURCE_TARBALL"
-cd "wine-plugin-toolkit-${VERSION}"
-```
-
-From that directory, or the root of a source checkout, install into a virtual environment:
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install '.[gui]'   # drop [gui] if you only want the CLI
-.venv/bin/wpt env
-```
-
-The venv commands live in `.venv/bin`. Activate it in each terminal before using the bare `wpt`
-and `wpt-gui` commands below (`. .venv/bin/activate`), or run them with the `.venv/bin/` prefix.
-Anything installed this way is a copy, so `wpt update` (which installs an Arch package) does not
-apply to it. Update it the same way you installed it.
-
-### Your first five minutes
-
-```bash
-wpt doctor          # can it see your Wine stack, msitools, your plugin dirs, and write a scratch dir?
-wpt env             # what exactly did it find: tree, prefix, Windows user, every directory
-wpt list            # what is actually installed in there, and is it intact
-```
-
-`doctor` says what to fix if something is missing, and exits non-zero so you can use it in a script.
-If it cannot find your Wine stack, tell it where to look. Replace `11.13` with your installed tree version; the global options go before the subcommand:
-
-```bash
-wpt --prefix "$HOME/.wine-ableton" --tree "$HOME/.local/opt/wine-d2d1-nspa-11.13" doctor
-```
+place selected payload files and check them afterwards; package-specific behavior still needs
+validation. The case that started it: an Archetype plugin upgrade where the wrapper hung at
+*"Starting install"* with an empty progress bar, `msiexec` failed twice, and the prefix claimed the
+product was installed while not one plugin file existed on disk.
 
 ## Coming from Windows
 
@@ -446,7 +537,7 @@ installs all three.
 ## GUI
 
 ```bash
-wpt-gui            # or: python3 -m wpt.gui
+wpt-gui
 ```
 
 Six tabs, in the order you use them, each a thin wrapper over the same core functions as the CLI:
@@ -470,8 +561,9 @@ Six tabs, in the order you use them, each a thin wrapper over the same core func
   Right-click a row for the same actions plus the file's path, preset sites, **Browse local files** and
   (when one exact-name `.exe` exists under this prefix's Program Files) **Run in Standalone** through
   the selected profile's custom Wine tree and environment. Unverified MSI ownership is marked in the action; the app may contact
-  its licensing service. `Program Files (x86)` is not searched. WPT reuses the selected Wine stack for
-  ASIO, but does not install/configure PipeASIO or choose audio devices; set those up in Wine first.
+  its licensing service. `Program Files (x86)` is not searched. Standalone apps run under the selected
+  Wine profile. WPT does not install or configure PipeASIO, select audio devices or manage routing;
+  configure the audio stack separately through ableton-linux.
   Within one WPT window, multiple apps can be launched under its active profile; tracked groups block
   profile changes, prefix writes and update restarts while active. WPT starts each launcher in a separate
   session and does not signal it when the window closes. Vendor apps may impose their own concurrency

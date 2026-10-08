@@ -207,8 +207,27 @@ def run() -> None:
           "README doctor override example has a dedicated CLI regression test")
     check("sudo apt install python3 python3-venv msitools" in readme,
           "README Debian/Ubuntu dependency command installs Python, venv and msitools")
-    check(". .venv/bin/activate" in readme,
-          "README explains how to activate source-install console scripts")
+    check("`wpt doctor` reports missing system tools but does not install them" in readme
+          and "set up the ableton-linux Wine prefix and staged Wine tree" in readme
+          and "Back up the prefix" in readme,
+          "README distinguishes WPT dependencies from the separately required Wine stack")
+    check("sudo dnf install python3 python3-pip msitools" in readme
+          and "<summary>Arch / CachyOS (recommended)</summary>" in readme
+          and "<summary>Debian / Ubuntu and derivatives</summary>" in readme
+          and "<summary>Fedora</summary>" in readme,
+          "README provides collapsible install paths for three distro families")
+    check("Developed on CachyOS with the ableton-linux stack." in readme
+          and "Nolly X was installed with WPT v0.4.0" in readme
+          and "Set up PipeASIO separately through ableton-linux" in readme
+          and "file-manifest, install-plan and uninstall paths have synthetic-prefix tests only" in readme
+          and "profile-based standalone launcher has fake-Wine tests only" in readme
+          and "Neither has live-prefix validation" in readme,
+          "README scopes historical plugin use, PipeASIO and current test limits")
+    check("The GUI can save\nand switch between Wine and prefix profiles" in readme
+          and "The GUI can save and switch between profiles that select a Wine tree and prefix" in readme,
+          "README scopes saved Wine/prefix profiles to the GUI")
+    check('. "$HOME/.local/share/wpt/venv/bin/activate"' in readme,
+          "README explains how to activate the stable source-install environment")
     check("sudo apt install python3 python3-venv msitools" in testing
           and "python3 --version" in testing and ". .venv/bin/activate" in testing,
           "TESTING states the minimum Python version, apt dependencies and venv activation")
@@ -225,8 +244,10 @@ def run() -> None:
           "README builds from the exact source archive it verifies")
     check('tar xzf "$SOURCE_TARBALL"' in readme
           and 'cd "wine-plugin-toolkit-${VERSION}"' in readme
-          and ".venv/bin/python -m pip install '.[gui]'" in readme,
-          "README verifies, extracts and installs the cross-distro source archive")
+          and '"$HOME/.local/share/wpt/venv/bin/python" -m pip install --upgrade' in readme
+          and "replace `'.[gui]'` with `.`" in readme
+          and '"$HOME/.local/share/wpt/venv/bin/wpt-gui"' in readme,
+          "README verifies, extracts and installs into a stable cross-distro venv")
     check("Global flags must come before the subcommand" in readme
           and "`--home` is a discovery override, not a general `HOME` override" in readme
           and "home used for Wine-tree/product discovery and the rescue-store" in readme
@@ -298,7 +319,7 @@ def run() -> None:
     failure = Report(); failure.add("fixture", FAIL)
     check((clean.exit_code, warning.exit_code, failure.exit_code) == (0, 1, 2),
           "doctor clean/warn/fail exit codes 0/1/2")
-    for number in range(1, 20):
+    for number in range(1, 23):
         name = f"C{number:02d}"
         check(re.search(rf"^\| {name} \|", ledger, re.M) is not None, f"ledger contains {name}")
     check(not ledger_gaps(ledger), "no malformed claim rows or VERIFIED rows without command/output fields")
